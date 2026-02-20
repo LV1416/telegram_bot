@@ -12,6 +12,8 @@ def parse_message(text):
         "Type": r"type\s*-\s*(.*)",
         "Reason": r"reason\s*-\s*(.*)",
         "Schedule": r"Schedule\s*-\s*(.*)",
+        "OH Date": r"O\/H Date\s*-\s*(.*)",
+        "WO No": r"W\/O No\.\s*-\s*(.*)",
     }
 
     data = {}
@@ -31,4 +33,6 @@ def parse_message(text):
         data.get("Type", ""),
         data.get("Reason", ""),
         data.get("Schedule", ""),
+        data.get("OH Date", ""),
+        data.get("WO No", ""),
     ]
