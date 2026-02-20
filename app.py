@@ -1,12 +1,12 @@
 import os
 import json
+import asyncio
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from parser import parse_message
-import asyncio
 
 # ===== ENV VARIABLES =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -24,7 +24,7 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open(SHEET_NAME).sheet1
 
-# ===== TELEGRAM =====
+# ===== TELEGRAM SETUP =====
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -36,16 +36,17 @@ telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
 )
 
-# Initialize Telegram app
+# Initialize & start telegram processing loop
 asyncio.run(telegram_app.initialize())
+asyncio.run(telegram_app.start())
 
-# ===== FLASK =====
+# ===== FLASK APP =====
 app = Flask(__name__)
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    telegram_app.update_queue.put_nowait(update)
+    asyncio.run(telegram_app.process_update(update))
     return "OK", 200
 
 @app.route("/health", methods=["GET"])
@@ -56,7 +57,7 @@ def health():
 def home():
     return "Telegram Bot Active", 200
 
-# ===== START =====
+# ===== START SERVER =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
