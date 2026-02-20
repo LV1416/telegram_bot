@@ -13,7 +13,7 @@ SHEET_NAME = os.getenv("SHEET_NAME")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
-# ===== GOOGLE SHEETS SETUP =====
+# ===== GOOGLE SHEETS =====
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
@@ -21,11 +21,10 @@ scope = [
 
 creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-
 client = gspread.authorize(creds)
 sheet = client.open(SHEET_NAME).sheet1
 
-# ===== TELEGRAM SETUP =====
+# ===== TELEGRAM =====
 telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -37,31 +36,29 @@ telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
 )
 
-# ===== FLASK APP =====
+# ===== FLASK =====
 app = Flask(__name__)
 
 @app.route("/webhook", methods=["POST"])
-async def webhook():
+def webhook():
     update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    await telegram_app.process_update(update)
+    telegram_app.update_queue.put_nowait(update)
     return "OK", 200
 
 @app.route("/health", methods=["GET"])
 def health():
-    return "Bot is running", 200
+    return "Bot running", 200
 
 @app.route("/", methods=["GET"])
 def home():
     return "Telegram Bot Active", 200
 
-# ===== START SERVER =====
+# ===== START =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
 
-    # Auto-set webhook every time app starts
     import asyncio
-    asyncio.run(
-        telegram_app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
-    )
+    asyncio.run(telegram_app.initialize())
+    asyncio.run(telegram_app.bot.set_webhook(f"{WEBHOOK_URL}/webhook"))
 
     app.run(host="0.0.0.0", port=port)
