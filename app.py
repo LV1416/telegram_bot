@@ -1,19 +1,18 @@
 import os
 import json
-import asyncio
-from flask import Flask, request
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 from parser import parse_message
 
 # ===== ENV VARIABLES =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SHEET_NAME = os.getenv("SHEET_NAME")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
-# ===== GOOGLE SHEETS =====
+# ===== GOOGLE SHEETS SETUP =====
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
@@ -21,43 +20,29 @@ scope = [
 
 creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+
 client = gspread.authorize(creds)
 sheet = client.open(SHEET_NAME).sheet1
 
 # ===== TELEGRAM SETUP =====
-telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
+app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.text:
         row = parse_message(update.message.text)
         sheet.append_row(row)
 
-telegram_app.add_handler(
+app_telegram.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
 )
 
-# Initialize & start telegram processing loop
-asyncio.run(telegram_app.initialize())
-asyncio.run(telegram_app.start())
-
-# ===== FLASK APP =====
-app = Flask(__name__)
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    asyncio.run(telegram_app.process_update(update))
-    return "OK", 200
-
-@app.route("/health", methods=["GET"])
-def health():
-    return "Bot running", 200
-
-@app.route("/", methods=["GET"])
-def home():
-    return "Telegram Bot Active", 200
-
-# ===== START SERVER =====
+# ===== START WEBHOOK SERVER =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+
+    app_telegram.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path="webhook",
+        webhook_url=f"{WEBHOOK_URL}/webhook",
+    )
