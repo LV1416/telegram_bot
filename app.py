@@ -6,11 +6,11 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filte
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from parser import parse_message
+import asyncio
 
 # ===== ENV VARIABLES =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SHEET_NAME = os.getenv("SHEET_NAME")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
 # ===== GOOGLE SHEETS =====
@@ -36,6 +36,9 @@ telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
 )
 
+# Initialize Telegram app
+asyncio.run(telegram_app.initialize())
+
 # ===== FLASK =====
 app = Flask(__name__)
 
@@ -56,9 +59,4 @@ def home():
 # ===== START =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-
-    import asyncio
-    asyncio.run(telegram_app.initialize())
-    asyncio.run(telegram_app.bot.set_webhook(f"{WEBHOOK_URL}/webhook"))
-
     app.run(host="0.0.0.0", port=port)
