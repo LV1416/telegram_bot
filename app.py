@@ -1,66 +1,67 @@
 import os
+import json
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from config import BOT_TOKEN, SHEET_NAME, WEBHOOK_URL, GOOGLE_CREDENTIALS_FILE
 from parser import parse_message
-import json
 
-# ====== GOOGLE SHEETS SETUP ======
+# ===== ENV VARIABLES =====
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SHEET_NAME = os.getenv("SHEET_NAME")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
+# ===== GOOGLE SHEETS SETUP =====
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
 ]
 
-
-
-google_creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-
-creds_dict = json.loads(google_creds_json)
-
-creds = ServiceAccountCredentials.from_json_keyfile_dict(
-    creds_dict, scope
-)
-
+creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 
 client = gspread.authorize(creds)
 sheet = client.open(SHEET_NAME).sheet1
 
-# ====== TELEGRAM SETUP ======
-
-app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
+# ===== TELEGRAM SETUP =====
+telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.text:
         row = parse_message(update.message.text)
         sheet.append_row(row)
 
-app_telegram.add_handler(
+telegram_app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
 )
 
-# ====== FLASK WEBHOOK ======
-
+# ===== FLASK APP =====
 app = Flask(__name__)
 
 @app.route("/webhook", methods=["POST"])
 async def webhook():
-    update = Update.de_json(request.get_json(force=True), app_telegram.bot)
-    await app_telegram.process_update(update)
-    return "ok"
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    await telegram_app.process_update(update)
+    return "OK", 200
 
-@app.route("/")
+@app.route("/health", methods=["GET"])
+def health():
+    return "Bot is running", 200
+
+@app.route("/", methods=["GET"])
 def home():
-    return "Bot is running!"
+    return "Telegram Bot Active", 200
 
+# ===== START SERVER =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    app_telegram.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path="webhook",
-        webhook_url=f"{WEBHOOK_URL}/webhook",
+
+    # Auto-set webhook every time app starts
+    import asyncio
+    asyncio.run(
+        telegram_app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
     )
+
+    app.run(host="0.0.0.0", port=port)
