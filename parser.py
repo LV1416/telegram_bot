@@ -2,15 +2,16 @@ import re
 
 def parse_message(text):
     patterns = {
-        "Date": r"date\s*-\s*(.*)",
-        "Loco No": r"Loco no\.\s*-\s*(.*)",
+        "Date": r"Date\s*-\s*(.*)",
+        "Loco No": r"Loco No\.\s*-\s*(.*)",
         "Item": r"Item\s*-\s*(.*)",
+        "Side": r"Side\s*-\s*(.*)",
         "Status": r"Status\s*-\s*(.*)",
-        "Sr No": r"Sr\. no\.\s*-\s*(.*)",
+        "Sr No": r"Sr\. No\.\s*-\s*(.*)",
         "Mfg": r"Mfg\s*-\s*(.*)",
-        "Make": r"make\s*-\s*(.*)",
-        "Type": r"type\s*-\s*(.*)",
-        "Reason": r"reason\s*-\s*(.*)",
+        "Make": r"Make\s*-\s*(.*)",
+        "Type": r"Type\s*-\s*(.*)",
+        "Reason": r"Reason\s*-\s*(.*)",
         "Schedule": r"Schedule\s*-\s*(.*)",
         "OH Date": r"O\/H Date\s*-\s*(.*)",
         "WO No": r"W\/O No\.\s*-\s*(.*)",
@@ -26,6 +27,7 @@ def parse_message(text):
         data.get("Date", ""),
         data.get("Loco No", ""),
         data.get("Item", ""),
+        data.get("Side", ""),      # NEW COLUMN
         data.get("Status", ""),
         data.get("Sr No", ""),
         data.get("Mfg", ""),
