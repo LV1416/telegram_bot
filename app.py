@@ -29,8 +29,17 @@ app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message and update.message.text:
-        row = parse_message(update.message.text)
-        sheet.append_row(row)
+        text = update.message.text.strip()
+
+        # Route to Panto Status sheet
+        if text.upper().startswith("PANTO STATUS"):
+            target_sheet = client.open(SHEET_NAME).worksheet("Panto Status")
+            row = parse_panto_status(text)
+        else:
+            target_sheet = client.open(SHEET_NAME).sheet1
+            row = parse_message(text)
+
+        target_sheet.append_row(row)
 
 app_telegram.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
