@@ -1,5 +1,43 @@
 import re
 
+def parse_dga(text):
+    patterns = {
+        "Date": r"Date\s*-\s*(.*)",
+        "Loco No": r"Loco No\s*-\s*(.*)",
+        "Schedule": r"Schedule\s*-\s*(.*)",
+        "Oil": r"Oil\s*-\s*(.*)",
+        "CH4": r"CH4\s*-\s*(.*)",
+        "C2H4": r"C2H4\s*-\s*(.*)",
+        "C2H6": r"C2H6\s*-\s*(.*)",
+        "C2H2": r"C2H2\s*-\s*(.*)",
+        "H2": r"H2\s*-\s*(.*)",
+        "CO": r"CO\s*-\s*(.*)",
+        "CO2": r"CO2\s*-\s*(.*)",
+        "BDV": r"BDV\s*-\s*(.*)",
+        "Remark": r"Remark\s*-\s*(.*)",
+    }
+
+    data = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        data[key] = match.group(1).strip() if match else ""
+
+    return [
+        data.get("Date", ""),
+        data.get("Loco No", ""),
+        data.get("Schedule", ""),
+        data.get("Oil", ""),
+        data.get("CH4", ""),
+        data.get("C2H4", ""),
+        data.get("C2H6", ""),
+        data.get("C2H2", ""),
+        data.get("H2", ""),
+        data.get("CO", ""),
+        data.get("CO2", ""),
+        data.get("BDV", ""),
+        data.get("Remark", ""),
+    ]
+
 def parse_message(text):
     patterns = {
         "Date": r"Date\s*-\s*(.*)",
