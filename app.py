@@ -4,7 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
-from parser import parse_message, parse_panto_status
+from parser import parse_message, parse_panto_status, parse_dga
 
 # ===== ENV VARIABLES =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -27,19 +27,25 @@ sheet = client.open(SHEET_NAME).sheet1
 # ===== TELEGRAM SETUP =====
 app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+
+async def handle_message(update, context):
     if update.message and update.message.text:
         text = update.message.text.strip()
 
-        # Route to Panto Status sheet
         if text.upper().startswith("PANTO STATUS"):
-            target_sheet = client.open(SHEET_NAME).worksheet("Panto Status")
+            sheet = client.open(SHEET_NAME).worksheet("Panto Status")
             row = parse_panto_status(text)
+
+        elif text.upper().startswith("DGA REPORT"):
+            sheet = client.open(SHEET_NAME).worksheet("DGA Report")
+            row = parse_dga(text)
+
         else:
-            target_sheet = client.open(SHEET_NAME).sheet1
+            sheet = client.open(SHEET_NAME).sheet1
             row = parse_message(text)
 
-        target_sheet.append_row(row)
+        sheet.append_row(row)
 
 app_telegram.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
