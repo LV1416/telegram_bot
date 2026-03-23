@@ -1,5 +1,47 @@
 import re
 
+def parse_emp_record(text):
+    patterns = {
+        "Token No": r"^Token No\s*-\s*(.*)$",
+        "Emp HRMS ID": r"^Emp HRMS ID\s*-\s*(.*)$",
+        "Bill Unit": r"^Bill Unit\s*-\s*(.*)$",
+        "Emp Name": r"^Emp Name\s*-\s*(.*)$",
+        "Department": r"^Department\s*-\s*(.*)$",
+        "Designation": r"^Designation\s*-\s*(.*)$",
+        "Aadhar Number": r"^Aadhar Number\s*-\s*(.*)$",
+        "Permanent Address": r"^Permanent Address\s*-\s*(.*)$",
+        "Place of Posting": r"^Place of Posting\s*-\s*(.*)$",
+        "Mobile No": r"^Mobile No\s*-\s*(.*)$",
+        "Blood Group": r"^Blood Group\s*-\s*(.*)$",
+    }
+
+    data = {}
+
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        data[key] = match.group(1).strip() if match else ""
+
+    return [
+        "",  # S.No (auto in sheet)
+        data.get("Token No", ""),
+        data.get("Emp HRMS ID", ""),
+        data.get("Bill Unit", ""),
+        data.get("Emp Name", ""),
+        data.get("Department", ""),
+        data.get("Designation", ""),
+        "",  # Photo
+        "",  # Signature
+        data.get("Aadhar Number", ""),
+        data.get("Permanent Address", ""),
+        data.get("Place of Posting", ""),
+        data.get("Mobile No", ""),
+        "",  # Return Mobile
+        data.get("Blood Group", ""),
+        "", "", "", "", "", "", ""  # remaining fields
+    ]
+
+
+
 # =========================
 # 🔵 DGA PARSER
 # =========================
