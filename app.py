@@ -4,7 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
-from parser import parse_message, parse_panto_status, parse_dga
+from parser import parse_message, parse_panto_status, parse_dga, parse_emp_record
 
 # ===== ENV VARIABLES =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -33,13 +33,17 @@ async def handle_message(update, context):
     if update.message and update.message.text:
         text = update.message.text.strip()
 
-        if text.upper().startswith("PANTO STATUS"):
-            sheet = client.open(SHEET_NAME).worksheet("Panto Status")
-            row = parse_panto_status(text)
+        if text.upper().startswith("EMP RECORD"):
+            sheet = client.open(SHEET_NAME).worksheet("Emp Record")
+            row = parse_emp_record(text)
 
         elif text.upper().startswith("DGA REPORT"):
             sheet = client.open(SHEET_NAME).worksheet("DGA Report")
             row = parse_dga(text)
+
+        elif text.upper().startswith("PANTO STATUS"):
+            sheet = client.open(SHEET_NAME).worksheet("Panto Status")
+            row = parse_panto_status(text)
 
         else:
             sheet = client.open(SHEET_NAME).sheet1
