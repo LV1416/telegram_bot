@@ -16,6 +16,83 @@ from parser import (
 )
 from gemini_ai import extract_structured_fields, GeminiError
 
+INFO_SHEET_TITLE = os.getenv("INFO_SHEET_TITLE") or "Loco Info"
+
+def _to_iso_date(date_str: str) -> str:
+    s = (date_str or "").strip()
+    if not s:
+        return ""
+    m = None
+    # dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy
+    m = __import__("re").search(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b", s)
+    if not m:
+        return s
+    dd, mm, yyyy = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+    return f"{yyyy}-{mm}-{dd}"
+
+def _ensure_info_sheet(book) -> "gspread.Worksheet":
+    try:
+        ws = book.worksheet(INFO_SHEET_TITLE)
+    except Exception:
+        ws = book.add_worksheet(title=INFO_SHEET_TITLE, rows=2000, cols=4)
+        ws.append_row(["Sr. No.", "Date", "Loco No.", "Information"])
+    return ws
+
+def _format_information(message_type: str, fields: dict, raw_text: str) -> str:
+    mt = (message_type or "").strip().lower()
+    f = fields or {}
+
+    def g(key: str) -> str:
+        v = f.get(key, "")
+        return "" if v is None else str(v).strip()
+
+    lines = []
+    if mt == "dga_report":
+        lines.append("DGA Report")
+        if g("schedule"):
+            lines.append(f"- Schedule: {g('schedule')}")
+        for k in ["oil", "ch4", "c2h4", "c2h6", "c2h2", "h2", "co", "co2", "bdv"]:
+            if g(k):
+                lines.append(f"- {k.upper()}: {g(k)}")
+        if g("remark"):
+            lines.append(f"- Remark: {g('remark')}")
+    elif mt == "panto_status":
+        lines.append("Panto Status")
+        lines.append(f"- PT1 Pressure: {g('pt1 pressure')}")
+        lines.append(f"- PT2 Pressure: {g('pt2 pressure')}")
+        if g("pt1 ord"):
+            lines.append(f"- PT1 Height: {g('pt1 ord')}")
+        if g("pt2 ord"):
+            lines.append(f"- PT2 Height: {g('pt2 ord')}")
+        if g("pt1 add"):
+            lines.append(f"- PT1 ADD: {g('pt1 add')}")
+        if g("pt2 add"):
+            lines.append(f"- PT2 ADD: {g('pt2 add')}")
+    else:
+        lines.append("Main Equipment")
+        if g("item"):
+            lines.append(f"- Item: {g('item')}")
+        if g("status"):
+            lines.append(f"- Status: {g('status')}")
+        if g("sr no"):
+            lines.append(f"- Sr No: {g('sr no')}")
+        if g("make"):
+            lines.append(f"- Make: {g('make')}")
+        if g("type"):
+            lines.append(f"- Type: {g('type')}")
+        if g("reason"):
+            lines.append(f"- Reason: {g('reason')}")
+        if g("schedule"):
+            lines.append(f"- Schedule: {g('schedule')}")
+
+    # Always include original message at bottom for reference.
+    if raw_text:
+        lines.append("")
+        lines.append("Message:")
+        lines.append(raw_text.strip())
+
+    return "\n".join(lines).strip()
+
 def _format_summary(message_type: str, fields: dict) -> str:
     mt = (message_type or "").strip().lower()
     f = fields or {}
@@ -145,6 +222,18 @@ async def handle_message(update, context):
             book = client.open(SHEET_NAME)
             sheet = book.worksheet(worksheet_name) if worksheet_name else book.sheet1
             sheet.append_row(row)
+
+            # Also log every message to the info sheet (Date/Loco/Information), sorted by date.
+            if extracted_fields is not None:
+                info_ws = _ensure_info_sheet(book)
+                log_date = _to_iso_date(str(extracted_fields.get("date", "")))
+                log_loco = str(extracted_fields.get("loco no", "")).strip()
+                info_text = _format_information(message_type, extracted_fields, text)
+                info_ws.append_row(["", log_date, log_loco, info_text])
+                try:
+                    info_ws.sort((2, "asc"))
+                except Exception:
+                    pass
         except Exception as e:
             await update.message.reply_text(f"Failed to save to Google Sheet: {e}")
             return
