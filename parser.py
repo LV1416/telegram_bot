@@ -73,8 +73,8 @@ def extract_free_text_fields(text: str) -> dict[str, str]:
     if m:
         out["sr no"] = f"{m.group(1).upper()}{m.group(2)} {m.group(3).upper()}"
 
-    # Make: common makes in your domain
-    m = re.search(r"\b(BLW|GM)\b", t, re.IGNORECASE)
+    # Make: only extract when explicitly labeled (avoid misclassifying "GM" in SR/type text)
+    m = re.search(r"\bmake\b\s*[:\-]?\s*(BLW|GM)\b", t, re.IGNORECASE)
     if m:
         out["make"] = m.group(1).upper()
 
@@ -85,9 +85,9 @@ def extract_free_text_fields(text: str) -> dict[str, str]:
 
     # Item normalization by keywords
     if "clutch" in tn:
-        out["item"] = "Clutch Assembly"
+        out["item"] = "Clutch"
     elif any(k in tn for k in ["turbo", "tsc", "hhp turbo"]):
-        out["item"] = "TSC HHP Turbo"
+        out["item"] = "TSC"
 
     # Status keywords
     if re.search(r"\b(received|reasived|received from)\b", tn):
@@ -230,24 +230,28 @@ def normalize_fields(message_type: str, fields: dict) -> dict:
     item_raw = _get(f, "item")
     item_n = _norm_key(item_raw)
 
-    # Turbo / TSC / HHP Turbo variants => canonical "TSC HHP Turbo"
+    # Turbo / TSC / HHP Turbo variants => canonical "TSC"
     if item_n and any(tok in item_n for tok in ["turbo", "tsc", "hhp"]):
         if "clutch" not in item_n:
-            f[_norm_key("item")] = "TSC HHP Turbo"
+            f[_norm_key("item")] = "TSC"
 
-    # Clutch variants => canonical "Clutch Assembly"
+    # Clutch variants => canonical "Clutch"
     if "clutch" in item_n:
-        f[_norm_key("item")] = "Clutch Assembly"
+        f[_norm_key("item")] = "Clutch"
 
     # Sr No: keep the full string (e.g. "I 12 2015 18 GMR3", "MOD 12 10 2025")
     sr = _get(f, "sr no")
     if sr:
         f[_norm_key("sr no")] = _format_sr_no(sr)
 
-    # Default make BLW for Turbo/TSC and Clutch when not provided.
+    # Make rules:
+    # - For TSC and Clutch, make is always BLW (override any mistaken extraction like "GM").
     make = _get(f, "make")
     item_final = _norm_key(_get(f, "item"))
-    if (not make) and (("turbo" in item_final) or ("tsc" in item_final) or ("clutch" in item_final)):
+    if ("tsc" in item_final) or ("clutch" in item_final):
+        if make.strip().upper() != "BLW":
+            f[_norm_key("make")] = "BLW"
+    elif (not make) and (("turbo" in item_final) or ("tsc" in item_final) or ("clutch" in item_final)):
         f[_norm_key("make")] = "BLW"
 
     # Side is optional; if user doesn't provide it, leave blank.

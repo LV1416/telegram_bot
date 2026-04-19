@@ -12,6 +12,7 @@ from parser import (
     validate_fields,
     fields_to_row,
     normalize_fields,
+    extract_free_text_fields,
 )
 from gemini_ai import extract_structured_fields, GeminiError
 
@@ -94,7 +95,14 @@ async def handle_message(update, context):
             worksheet_name, row, message_type = parse_any(text)
             # For formatting only (parse_any returns rows, not a fields dict).
             f = parse_key_values(text)
-            extracted_fields = normalize_fields(message_type, f)
+            # If the user sent free-text, parse_key_values will be mostly empty.
+            # Merge a heuristic extraction so the Telegram reply shows values.
+            if message_type == "main_equipment":
+                merged = dict(f)
+                merged.update(extract_free_text_fields(text))
+                extracted_fields = normalize_fields(message_type, merged)
+            else:
+                extracted_fields = normalize_fields(message_type, f)
         except ValueError as e:
             # Fallback: try Gemini extraction when local validation fails.
             try:
