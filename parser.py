@@ -40,6 +40,76 @@ def parse_key_values(text: str) -> dict:
 
     return fields
 
+def extract_free_text_fields(text: str) -> dict[str, str]:
+    """
+    Heuristic extraction for "simple sentence" messages.
+
+    This is intentionally conservative: it tries to extract the minimum
+    required fields for main_equipment so users don't need strict key-value
+    formatting.
+    """
+    t = (text or "").strip()
+    if not t:
+        return {}
+
+    tn = _norm_key(t)
+    out: dict[str, str] = {}
+
+    # Date: supports 15.04.2026 / 15-04-2026 / 15/04/2026
+    m = re.search(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b", t)
+    if m:
+        dd, mm, yyyy = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+        out["date"] = f"{dd}.{mm}.{yyyy}"
+
+    # Loco no: "loco no 70872" / "loco 70872"
+    m = re.search(r"\ब्लoco\s*(?:no\.?|number)?\s*[:\-]?\s*(\d{3,6})\b", t, re.IGNORECASE)
+    if not m:
+        m = re.search(r"\bloco\s*(?:no\.?|number)?\s*[:\-]?\s*(\d{3,6})\b", t, re.IGNORECASE)
+    if m:
+        out["loco no"] = m.group(1)
+
+    # Sr no: allow "I 12201518 GMR3" or "I12201518 GMR3"
+    m = re.search(r"\b(i)\s*([0-9]{8})\s*([a-z0-9]+)\b", t, re.IGNORECASE)
+    if m:
+        out["sr no"] = f"{m.group(1).upper()}{m.group(2)} {m.group(3).upper()}"
+
+    # Make: common makes in your domain
+    m = re.search(r"\b(BLW|GM)\b", t, re.IGNORECASE)
+    if m:
+        out["make"] = m.group(1).upper()
+
+    # Type: e.g. R-3, R3
+    m = re.search(r"\bR\s*-\s*\d+\b|\bR\d+\b", t, re.IGNORECASE)
+    if m:
+        out["type"] = re.sub(r"\s+", "", m.group(0)).upper()
+
+    # Item normalization by keywords
+    if "clutch" in tn:
+        out["item"] = "Clutch Assembly"
+    elif any(k in tn for k in ["turbo", "tsc", "hhp turbo"]):
+        out["item"] = "TSC HHP Turbo"
+
+    # Status keywords
+    if re.search(r"\b(received|reasived|received from)\b", tn):
+        out["status"] = "Received"
+    if re.search(r"\b(removed|remove|withdrawn)\b", tn):
+        out["status"] = "Removed"
+    if re.search(r"\b(fitted|fitment|installed)\b", tn):
+        out["status"] = "Fitted"
+    if re.search(r"\b(changed|replaced)\b", tn):
+        out["status"] = out.get("status") or "Changed"
+
+    # Reason: after "reason/resion" or "engine block change" etc.
+    m = re.search(r"\b(rea?son|resion)\b\s*[:\-]?\s*(.+)$", t, re.IGNORECASE)
+    if m:
+        out["reason"] = m.group(2).strip()
+    else:
+        m = re.search(r"\bengine\s+block\s+change\b", tn)
+        if m:
+            out["reason"] = "Engine block change"
+
+    return out
+
 
 _ALIASES: dict[str, list[str]] = {
     # Common
@@ -279,6 +349,16 @@ def parse_any(text: str) -> tuple[str, list, str]:
     message_type = infer_message_type(text, fields)
     missing = validate_fields(message_type, fields)
     if missing:
+        # If it's main equipment and user sent a free-form sentence,
+        # try a simple heuristic extractor before failing.
+        if message_type == "main_equipment":
+            merged = dict(fields)
+            merged.update(extract_free_text_fields(text))
+            missing2 = validate_fields(message_type, merged)
+            if not missing2:
+                # Build row from normalized fields dict.
+                worksheet, row = fields_to_row(message_type, normalize_fields(message_type, merged))
+                return worksheet, row, message_type
         raise ValueError("Missing required fields: " + ", ".join(missing))
 
     if message_type == "dga_report":
