@@ -194,6 +194,33 @@ def normalize_fields(message_type: str, fields: dict) -> dict:
             continue
         f[ks] = "" if v is None else str(v).strip()
 
+    def _extract_number(s: str) -> str:
+        m = re.search(r"(\d+(?:\.\d+)?)", s or "")
+        return m.group(1) if m else ""
+
+    if mt == "panto_status":
+        # Allow combined inputs like: "4.6& height 3760mm"
+        p1_raw = _get(f, "pt1 pressure")
+        p2_raw = _get(f, "pt2 pressure")
+        if p1_raw:
+            f[_norm_key("pt1 pressure")] = _extract_number(p1_raw) or p1_raw
+            m = re.search(r"\bheight\b\s*[:\-]?\s*(\d{3,5})\s*mm?\b", p1_raw, re.IGNORECASE)
+            if m:
+                f[_norm_key("pt1 ord")] = m.group(1)
+        if p2_raw:
+            f[_norm_key("pt2 pressure")] = _extract_number(p2_raw) or p2_raw
+            m = re.search(r"\bheight\b\s*[:\-]?\s*(\d{3,5})\s*mm?\b", p2_raw, re.IGNORECASE)
+            if m:
+                f[_norm_key("pt2 ord")] = m.group(1)
+
+        # If both heights are present, mark ADD as Active (as per your sheet).
+        if _get(f, "pt1 ord") and _get(f, "pt2 ord"):
+            if not _get(f, "pt1 add"):
+                f[_norm_key("pt1 add")] = "Active"
+            if not _get(f, "pt2 add"):
+                f[_norm_key("pt2 add")] = "Active"
+        return f
+
     if mt != "main_equipment":
         return f
 

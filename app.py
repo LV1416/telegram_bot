@@ -43,6 +43,14 @@ def _format_summary(message_type: str, fields: dict) -> str:
             f"PT1 Pressure: {g('pt1 pressure')}",
             f"PT2 Pressure: {g('pt2 pressure')}",
         ]
+        if g("pt1 ord"):
+            parts.append(f"PT1 Height: {g('pt1 ord')}")
+        if g("pt2 ord"):
+            parts.append(f"PT2 Height: {g('pt2 ord')}")
+        if g("pt1 add"):
+            parts.append(f"PT1 ADD: {g('pt1 add')}")
+        if g("pt2 add"):
+            parts.append(f"PT2 ADD: {g('pt2 add')}")
         return "\n".join(parts)
 
     # main_equipment

@@ -97,6 +97,7 @@ def extract_structured_fields(raw_text: str) -> tuple[str, dict]:
         "- fields must be an object of string->string values.\n"
         "- Use only canonical keys listed in the chosen schema.\n"
         "- Do NOT invent values. If a field is missing, omit it.\n"
+        "- For panto_status: if a line includes height (e.g. 'PT1 pressure 4.6 & height 3760mm'), put the height into 'pt1 ord'/'pt2 ord'. If BOTH heights are present, set 'pt1 add' and 'pt2 add' to 'Active'.\n"
         "- Pick message_type by evidence: keywords (e.g. 'DGA', 'PANTO') and/or which required fields are present.\n\n"
         f"Message type schemas:\n{json.dumps(schemas, ensure_ascii=False)}\n\n"
         f"Raw message:\n{raw_text}"
