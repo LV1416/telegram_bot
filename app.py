@@ -4,7 +4,64 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
-from parser import parse_message, parse_panto_status, parse_dga, parse_emp_record
+from parser import (
+    parse_any,
+    format_template,
+    infer_message_type,
+    parse_key_values,
+    validate_fields,
+    fields_to_row,
+    normalize_fields,
+)
+from gemini_ai import extract_structured_fields, GeminiError
+
+def _format_summary(message_type: str, fields: dict) -> str:
+    mt = (message_type or "").strip().lower()
+    f = fields or {}
+
+    def g(key: str) -> str:
+        v = f.get(key, "")
+        return "" if v is None else str(v).strip()
+
+    if mt == "dga_report":
+        parts = [
+            "✅ Saved",
+            f"Type: DGA Report",
+            f"Date: {g('date')}",
+            f"Loco No: {g('loco no')}",
+            f"Schedule: {g('schedule')}",
+        ]
+        return "\n".join(parts)
+
+    if mt == "panto_status":
+        parts = [
+            "✅ Saved",
+            f"Type: Panto Status",
+            f"Date: {g('date')}",
+            f"Loco No: {g('loco no')}",
+            f"PT1 Pressure: {g('pt1 pressure')}",
+            f"PT2 Pressure: {g('pt2 pressure')}",
+        ]
+        return "\n".join(parts)
+
+    # main_equipment
+    parts = [
+        "✅ Saved",
+        f"Type: Main Equipment",
+        f"Date: {g('date')}",
+        f"Loco No: {g('loco no')}",
+        f"Item: {g('item')}",
+        f"Status: {g('status')}",
+    ]
+    if g("sr no"):
+        parts.append(f"Sr No: {g('sr no')}")
+    if g("make"):
+        parts.append(f"Make: {g('make')}")
+    if g("type"):
+        parts.append(f"Type: {g('type')}")
+    if g("reason"):
+        parts.append(f"Reason: {g('reason')}")
+    return "\n".join(parts)
 
 # ===== ENV VARIABLES =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -32,24 +89,54 @@ app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
 async def handle_message(update, context):
     if update.message and update.message.text:
         text = update.message.text.strip()
+        extracted_fields: dict | None = None
+        try:
+            worksheet_name, row, message_type = parse_any(text)
+            # For formatting only (parse_any returns rows, not a fields dict).
+            f = parse_key_values(text)
+            extracted_fields = normalize_fields(message_type, f)
+        except ValueError as e:
+            # Fallback: try Gemini extraction when local validation fails.
+            try:
+                mt, fields = extract_structured_fields(text)
+                fields = normalize_fields(mt, fields)
+                missing = validate_fields(mt, fields)
+                if missing:
+                    await update.message.reply_text(
+                        "Invalid message.\nMissing required fields: "
+                        + ", ".join(missing)
+                        + "\n\nCopy-paste template:\n\n"
+                        + format_template(mt)
+                    )
+                    return
+                worksheet_name, row = fields_to_row(mt, fields)
+                message_type = mt
+                extracted_fields = fields
+            except GeminiError:
+                guessed_type = infer_message_type(text, parse_key_values(text))
+                await update.message.reply_text(
+                    f"Invalid message.\n{e}\n\nCopy-paste template:\n\n{format_template(guessed_type)}"
+                )
+                return
+        except Exception:
+            await update.message.reply_text(
+                "Couldn't understand this message. Please send in key-value format like:\n\n"
+                + format_template("main_equipment")
+            )
+            return
 
-        if text.upper().startswith("EMP RECORD"):
-            sheet = client.open(SHEET_NAME).worksheet("Emp Record")
-            row = parse_emp_record(text)
+        try:
+            book = client.open(SHEET_NAME)
+            sheet = book.worksheet(worksheet_name) if worksheet_name else book.sheet1
+            sheet.append_row(row)
+        except Exception as e:
+            await update.message.reply_text(f"Failed to save to Google Sheet: {e}")
+            return
 
-        elif text.upper().startswith("DGA REPORT"):
-            sheet = client.open(SHEET_NAME).worksheet("DGA Report")
-            row = parse_dga(text)
-
-        elif text.upper().startswith("PANTO STATUS"):
-            sheet = client.open(SHEET_NAME).worksheet("Panto Status")
-            row = parse_panto_status(text)
-
+        if extracted_fields is not None:
+            await update.message.reply_text(_format_summary(message_type, extracted_fields))
         else:
-            sheet = client.open(SHEET_NAME).sheet1
-            row = parse_message(text)
-
-        sheet.append_row(row)
+            await update.message.reply_text("Saved to Google Sheet.")
 
 app_telegram.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
