@@ -48,48 +48,40 @@ def _format_information(message_type: str, fields: dict, raw_text: str) -> str:
 
     lines = []
     if mt == "dga_report":
-        lines.append("DGA Report")
+        # Keep it short for the log sheet.
+        pieces = ["DGA"]
         if g("schedule"):
-            lines.append(f"- Schedule: {g('schedule')}")
-        for k in ["oil", "ch4", "c2h4", "c2h6", "c2h2", "h2", "co", "co2", "bdv"]:
-            if g(k):
-                lines.append(f"- {k.upper()}: {g(k)}")
+            pieces.append(f"Sch {g('schedule')}")
         if g("remark"):
-            lines.append(f"- Remark: {g('remark')}")
+            pieces.append(f"Remark {g('remark')}")
+        lines.append(" | ".join(pieces))
     elif mt == "panto_status":
-        lines.append("Panto Status")
-        lines.append(f"- PT1 Pressure: {g('pt1 pressure')}")
-        lines.append(f"- PT2 Pressure: {g('pt2 pressure')}")
-        if g("pt1 ord"):
-            lines.append(f"- PT1 Height: {g('pt1 ord')}")
-        if g("pt2 ord"):
-            lines.append(f"- PT2 Height: {g('pt2 ord')}")
-        if g("pt1 add"):
-            lines.append(f"- PT1 ADD: {g('pt1 add')}")
-        if g("pt2 add"):
-            lines.append(f"- PT2 ADD: {g('pt2 add')}")
+        pieces = [
+            "Panto",
+            f"PT1 {g('pt1 pressure')}",
+            f"PT2 {g('pt2 pressure')}",
+        ]
+        if g("pt1 ord") and g("pt2 ord"):
+            pieces.append(f"H {g('pt1 ord')}/{g('pt2 ord')}")
+        if g("pt1 add") and g("pt2 add"):
+            pieces.append("ADD Active")
+        lines.append(" | ".join([p for p in pieces if p.strip()]))
     else:
-        lines.append("Main Equipment")
+        pieces = []
         if g("item"):
-            lines.append(f"- Item: {g('item')}")
+            pieces.append(g("item"))
         if g("status"):
-            lines.append(f"- Status: {g('status')}")
+            pieces.append(g("status"))
         if g("sr no"):
-            lines.append(f"- Sr No: {g('sr no')}")
+            pieces.append(f"Sr {g('sr no')}")
         if g("make"):
-            lines.append(f"- Make: {g('make')}")
-        if g("type"):
-            lines.append(f"- Type: {g('type')}")
-        if g("reason"):
-            lines.append(f"- Reason: {g('reason')}")
+            pieces.append(f"Make {g('make')}")
         if g("schedule"):
-            lines.append(f"- Schedule: {g('schedule')}")
-
-    # Always include original message at bottom for reference.
-    if raw_text:
-        lines.append("")
-        lines.append("Message:")
-        lines.append(raw_text.strip())
+            pieces.append(f"Sch {g('schedule')}")
+        if g("reason"):
+            pieces.append(g("reason"))
+        # 1-line summary. (No raw message dump.)
+        lines.append(" | ".join([p for p in pieces if p.strip()]) or "Main Equipment")
 
     return "\n".join(lines).strip()
 

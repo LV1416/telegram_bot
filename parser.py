@@ -122,7 +122,7 @@ _ALIASES: dict[str, list[str]] = {
     "item": ["item"],
     "side": ["side"],
     "status": ["status"],
-    "sr no": ["sr no", "sr. no", "srno", "serial no", "serial number"],
+    "sr no": ["sr no", "sr. no", "sr. no.", "srno", "s no", "s. no", "s. no.", "sno", "serial no", "serial number"],
     "mfg": ["mfg", "manufacturer"],
     "make": ["make"],
     "type": ["type"],
