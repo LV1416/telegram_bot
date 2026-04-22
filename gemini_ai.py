@@ -8,18 +8,12 @@ class GeminiError(Exception):
     pass
 
 
-def _endpoint_for_model(model: str) -> str:
-    model = (model or "").strip()
-    if not model:
-        model = "gemini-2.0-flash"
-    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
-
 def _to_iso_date(date_str: str) -> str:
     s = (date_str or "").strip()
     if not s:
         return ""
-    m = __import__("re").search(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b", s)
+    import re
+    m = re.search(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b", s)
     if not m:
         return s
     dd, mm, yyyy = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
@@ -28,26 +22,21 @@ def _to_iso_date(date_str: str) -> str:
 
 def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
     """
-    Use Gemini to extract fields from arbitrary text.
-
-    Returns a dict with:
-      - message_type: one of dga_report, panto_status, main_equipment, loco_info_only
-      - worksheet_name: sheet name or None for sheet1
-      - row: list of values for the main sheet
-      - loco_info: dict with date, loco_no, summary for Loco Info sheet
+    Use Groq API (Llama) to extract fields from arbitrary text.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise GeminiError("GEMINI_API_KEY is not set")
+        raise GeminiError("GROQ_API_KEY is not set")
 
-    model = os.getenv("GEMINI_MODEL") or "gemini-2.0-flash"
-    url = _endpoint_for_model(model)
+    model = os.getenv("GROQ_MODEL") or "llama-3.1-8b-instant"
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
 
     identifier_hint = ""
     if identifier:
         identifier_hint = f"\n- User provided ONE-WORD identifier: '{identifier}' - use this to help classify the message type."
 
-    prompt = (
+    system_prompt = (
         "You are a data extraction system for locomotive maintenance logs.\n"
         "Analyze the message and extract structured data.\n"
         "Rules:\n"
@@ -77,17 +66,20 @@ def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
         "Sheet column orders:\n"
         "- DGA Report: [Date, Loco No, Schedule, Oil, CH4, C2H4, C2H6, C2H2, H2, CO, CO2, BDV, Remark]\n"
         "- Panto Status: [Date, Loco No, PT1 Pressure, PT2 Pressure, PT1 ORD, PT2 ORD, PT1 ADD, PT2 ADD]\n"
-        "- Main Equipment (sheet1): [Date, Loco No, Item, Side, Status, Sr No, Mfg, Make, Type, Reason, Schedule, O/H Date, W/O No]\n\n"
-        f"Message to parse:{identifier_hint}\n{raw_text}"
+        "- Main Equipment (sheet1): [Date, Loco No, Item, Side, Status, Sr No, Mfg, Make, Type, Reason, Schedule, O/H Date, W/O No]"
     )
 
+    user_prompt = f"Message to parse:{identifier_hint}\n{raw_text}"
+
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 2048,
-            "responseMimeType": "application/json",
-        },
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "response_format": {"type": "json_object"},
     }
 
     req = urllib.request.Request(
@@ -95,7 +87,7 @@ def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
+            "Authorization": f"Bearer {api_key}",
         },
         method="POST",
     )
@@ -105,16 +97,22 @@ def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
-        raise GeminiError(f"Gemini HTTP error {e.code}: {body}") from e
+        raise GeminiError(f"Groq HTTP error {e.code}: {body}") from e
     except Exception as e:
-        raise GeminiError(f"Gemini request failed: {e}") from e
+        raise GeminiError(f"Groq request failed: {e}") from e
 
     try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        extracted = json.loads(text)
-
-        if not isinstance(extracted, dict):
-            raise ValueError("Expected JSON object")
+        text = data["choices"][0]["message"]["content"]
+        
+        try:
+            extracted = json.loads(text)
+        except json.JSONDecodeError:
+            content_start = text.find('{')
+            content_end = text.rfind('}') + 1
+            if content_start >= 0 and content_end > content_start:
+                extracted = json.loads(text[content_start:content_end])
+            else:
+                raise ValueError("No JSON found in response")
 
         message_type = extracted.get("message_type", "").strip().lower()
         worksheet_name = extracted.get("worksheet_name")
@@ -135,4 +133,4 @@ def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
             }
         }
     except Exception as e:
-        raise GeminiError(f"Gemini returned unreadable JSON: {e}") from e
+        raise GeminiError(f"Groq returned unreadable JSON: {e}") from e
