@@ -8,7 +8,7 @@ class GeminiError(Exception):
     pass
 
 
-def _to_iso_date(date_str: str) -> str:
+def _to_display_date(date_str: str) -> str:
     s = (date_str or "").strip()
     if not s:
         return ""
@@ -17,7 +17,7 @@ def _to_iso_date(date_str: str) -> str:
     if not m:
         return s
     dd, mm, yyyy = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
-    return f"{yyyy}-{mm}-{dd}"
+    return f"{dd}.{mm}.{yyyy}"
 
 
 def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
@@ -128,7 +128,7 @@ def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
             "worksheet_name": worksheet_name,
             "row": row if isinstance(row, list) else [],
             "loco_info": {
-                "date": _to_iso_date(loco_info.get("date", "")),
+                "date": _to_display_date(loco_info.get("date", "")),
                 "loco_no": str(loco_info.get("loco_no", "")).strip(),
                 "summary": str(loco_info.get("summary", "")).strip(),
             }

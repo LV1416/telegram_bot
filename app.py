@@ -11,6 +11,10 @@ INFO_SHEET_TITLE = os.getenv("INFO_SHEET_TITLE") or "Loco Info"
 def _ensure_info_sheet(book) -> "gspread.Worksheet":
     try:
         ws = book.worksheet(INFO_SHEET_TITLE)
+        # Check if header exists; insert it if sheet was created without one
+        first_row = ws.row_values(1)
+        if not first_row or first_row[0].strip().lower() != "sr. no.":
+            ws.insert_row(["Sr. No.", "Date", "Loco No.", "Information"], index=1)
     except Exception:
         ws = book.add_worksheet(title=INFO_SHEET_TITLE, rows=2000, cols=4)
         ws.append_row(["Sr. No.", "Date", "Loco No.", "Information"])
@@ -131,9 +135,15 @@ async def handle_message(update, context):
             log_summary = loco_info.get("summary", "")
 
             if log_date or log_loco or log_summary:
-                info_ws.append_row(["", log_date, log_loco, log_summary])
+                # Auto-increment Sr. No. (count data rows = total rows minus header)
+                all_rows = info_ws.get_all_values()
+                sr_no = len(all_rows)  # header is row 1, so len = next sr no
+                info_ws.append_row([sr_no, log_date, log_loco, log_summary])
                 try:
-                    info_ws.sort((2, "asc"))
+                    # Sort by Date column (col 2), but exclude header row 1
+                    last_row = len(info_ws.get_all_values())
+                    if last_row > 2:
+                        info_ws.sort((2, "asc"), range=f"A2:D{last_row}")
                 except Exception:
                     pass
 
