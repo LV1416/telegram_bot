@@ -28,7 +28,7 @@ def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
     if not api_key:
         raise GeminiError("GROQ_API_KEY is not set")
 
-    model = os.getenv("GROQ_MODEL") or "llama-3.1-8b-instant"
+    model = os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile"
 
     url = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -88,6 +88,7 @@ def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
+            "User-Agent": "Mozilla/5.0 (compatible; GroqClient/1.0)",
         },
         method="POST",
     )
