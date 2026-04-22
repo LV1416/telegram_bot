@@ -139,13 +139,6 @@ async def handle_message(update, context):
                 all_rows = info_ws.get_all_values()
                 sr_no = len(all_rows)  # header is row 1, so len = next sr no
                 info_ws.append_row([sr_no, log_date, log_loco, log_summary])
-                try:
-                    # Sort by Date column (col 2), but exclude header row 1
-                    last_row = len(info_ws.get_all_values())
-                    if last_row > 2:
-                        info_ws.sort((2, "asc"), range=f"A2:D{last_row}")
-                except Exception:
-                    pass
 
         except Exception as e:
             await update.message.reply_text(f"Failed to save to Google Sheet: {e}")
