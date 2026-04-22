@@ -4,31 +4,9 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
-from parser import (
-    parse_any,
-    format_template,
-    infer_message_type,
-    parse_key_values,
-    validate_fields,
-    fields_to_row,
-    normalize_fields,
-    extract_free_text_fields,
-)
 from gemini_ai import extract_structured_fields, GeminiError
 
 INFO_SHEET_TITLE = os.getenv("INFO_SHEET_TITLE") or "Loco Info"
-
-def _to_iso_date(date_str: str) -> str:
-    s = (date_str or "").strip()
-    if not s:
-        return ""
-    m = None
-    # dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy
-    m = __import__("re").search(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b", s)
-    if not m:
-        return s
-    dd, mm, yyyy = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
-    return f"{yyyy}-{mm}-{dd}"
 
 def _ensure_info_sheet(book) -> "gspread.Worksheet":
     try:
@@ -38,116 +16,40 @@ def _ensure_info_sheet(book) -> "gspread.Worksheet":
         ws.append_row(["Sr. No.", "Date", "Loco No.", "Information"])
     return ws
 
-def _format_information(message_type: str, fields: dict, raw_text: str) -> str:
+def _format_summary(message_type: str, loco_info: dict) -> str:
     mt = (message_type or "").strip().lower()
-    f = fields or {}
+    info = loco_info or {}
 
     def g(key: str) -> str:
-        v = f.get(key, "")
+        v = info.get(key, "")
         return "" if v is None else str(v).strip()
 
-    lines = []
+    parts = ["✅ Saved"]
+
     if mt == "dga_report":
-        # Keep it short for the log sheet.
-        pieces = ["DGA"]
-        if g("schedule"):
-            pieces.append(f"Sch {g('schedule')}")
-        if g("remark"):
-            pieces.append(f"Remark {g('remark')}")
-        lines.append(" | ".join(pieces))
+        parts.append(f"Type: DGA Report")
     elif mt == "panto_status":
-        pieces = [
-            "Panto",
-            f"PT1 {g('pt1 pressure')}",
-            f"PT2 {g('pt2 pressure')}",
-        ]
-        if g("pt1 ord") and g("pt2 ord"):
-            pieces.append(f"H {g('pt1 ord')}/{g('pt2 ord')}")
-        if g("pt1 add") and g("pt2 add"):
-            pieces.append("ADD Active")
-        lines.append(" | ".join([p for p in pieces if p.strip()]))
+        parts.append(f"Type: Panto Status")
+    elif mt == "main_equipment":
+        parts.append(f"Type: Main Equipment")
     else:
-        pieces = []
-        if g("item"):
-            pieces.append(g("item"))
-        if g("status"):
-            pieces.append(g("status"))
-        if g("sr no"):
-            pieces.append(f"Sr {g('sr no')}")
-        if g("make"):
-            pieces.append(f"Make {g('make')}")
-        if g("schedule"):
-            pieces.append(f"Sch {g('schedule')}")
-        if g("reason"):
-            pieces.append(g("reason"))
-        # 1-line summary. (No raw message dump.)
-        lines.append(" | ".join([p for p in pieces if p.strip()]) or "Main Equipment")
+        parts.append(f"Type: General Info")
 
-    return "\n".join(lines).strip()
+    if g("date"):
+        parts.append(f"Date: {g('date')}")
+    if g("loco_no"):
+        parts.append(f"Loco No: {g('loco_no')}")
 
-def _format_summary(message_type: str, fields: dict) -> str:
-    mt = (message_type or "").strip().lower()
-    f = fields or {}
+    if g("summary"):
+        parts.append(f"Info: {g('summary')}")
 
-    def g(key: str) -> str:
-        v = f.get(key, "")
-        return "" if v is None else str(v).strip()
-
-    if mt == "dga_report":
-        parts = [
-            "✅ Saved",
-            f"Type: DGA Report",
-            f"Date: {g('date')}",
-            f"Loco No: {g('loco no')}",
-            f"Schedule: {g('schedule')}",
-        ]
-        return "\n".join(parts)
-
-    if mt == "panto_status":
-        parts = [
-            "✅ Saved",
-            f"Type: Panto Status",
-            f"Date: {g('date')}",
-            f"Loco No: {g('loco no')}",
-            f"PT1 Pressure: {g('pt1 pressure')}",
-            f"PT2 Pressure: {g('pt2 pressure')}",
-        ]
-        if g("pt1 ord"):
-            parts.append(f"PT1 Height: {g('pt1 ord')}")
-        if g("pt2 ord"):
-            parts.append(f"PT2 Height: {g('pt2 ord')}")
-        if g("pt1 add"):
-            parts.append(f"PT1 ADD: {g('pt1 add')}")
-        if g("pt2 add"):
-            parts.append(f"PT2 ADD: {g('pt2 add')}")
-        return "\n".join(parts)
-
-    # main_equipment
-    parts = [
-        "✅ Saved",
-        f"Type: Main Equipment",
-        f"Date: {g('date')}",
-        f"Loco No: {g('loco no')}",
-        f"Item: {g('item')}",
-        f"Status: {g('status')}",
-    ]
-    if g("sr no"):
-        parts.append(f"Sr No: {g('sr no')}")
-    if g("make"):
-        parts.append(f"Make: {g('make')}")
-    if g("type"):
-        parts.append(f"Type: {g('type')}")
-    if g("reason"):
-        parts.append(f"Reason: {g('reason')}")
     return "\n".join(parts)
 
-# ===== ENV VARIABLES =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SHEET_NAME = os.getenv("SHEET_NAME")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
-# ===== GOOGLE SHEETS SETUP =====
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
@@ -159,87 +61,92 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 sheet = client.open(SHEET_NAME).sheet1
 
-# ===== TELEGRAM SETUP =====
 app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
 
+def _extract_identifier(text: str) -> tuple[str, str]:
+    """
+    Extract optional one-word identifier from message.
+    If message starts with a word followed by colon or space, treat first word as identifier.
+    Example: "dga: Date - ... " -> identifier="dga", remaining_text="Date - ..."
+    """
+    text = text.strip()
+    if not text:
+        return None, text
 
+    if ":" in text:
+        first_part = text.split(":")[0].strip()
+        if len(first_part.split()) == 1 and len(first_part) > 1:
+            identifier = first_part.lower()
+            remaining = text[len(first_part):].lstrip(": ").strip()
+            if remaining:
+                return identifier, remaining
+
+    parts = text.split()
+    if len(parts) >= 2:
+        first_word = parts[0].lower()
+        if len(first_word) >= 3 and first_word not in ["date", "loco", "item", "status", "panto", "dga"]:
+            return first_word, " ".join(parts[1:])
+
+    return None, text
 
 async def handle_message(update, context):
     if update.message and update.message.text:
         text = update.message.text.strip()
-        extracted_fields: dict | None = None
+
+        identifier, message_text = _extract_identifier(text)
+
         try:
-            worksheet_name, row, message_type = parse_any(text)
-            # For formatting only (parse_any returns rows, not a fields dict).
-            f = parse_key_values(text)
-            # If the user sent free-text, parse_key_values will be mostly empty.
-            # Merge a heuristic extraction so the Telegram reply shows values.
-            if message_type == "main_equipment":
-                merged = dict(f)
-                merged.update(extract_free_text_fields(text))
-                extracted_fields = normalize_fields(message_type, merged)
-            else:
-                extracted_fields = normalize_fields(message_type, f)
-        except ValueError as e:
-            # Fallback: try Gemini extraction when local validation fails.
-            try:
-                mt, fields = extract_structured_fields(text)
-                fields = normalize_fields(mt, fields)
-                missing = validate_fields(mt, fields)
-                if missing:
-                    await update.message.reply_text(
-                        "Invalid message.\nMissing required fields: "
-                        + ", ".join(missing)
-                        + "\n\nCopy-paste template:\n\n"
-                        + format_template(mt)
-                    )
-                    return
-                worksheet_name, row = fields_to_row(mt, fields)
-                message_type = mt
-                extracted_fields = fields
-            except GeminiError:
-                guessed_type = infer_message_type(text, parse_key_values(text))
-                await update.message.reply_text(
-                    f"Invalid message.\n{e}\n\nCopy-paste template:\n\n{format_template(guessed_type)}"
-                )
-                return
-        except Exception:
+            result = extract_structured_fields(message_text, identifier)
+        except GeminiError as e:
             await update.message.reply_text(
-                "Couldn't understand this message. Please send in key-value format like:\n\n"
-                + format_template("main_equipment")
+                f"Failed to parse message: {e}\n\n"
+                "Please ensure the message contains:\n"
+                "- Date (e.g., 15.04.2026)\n"
+                "- Loco No (e.g., 70872)\n"
+                "- Relevant fields for the type of report"
             )
             return
+        except Exception as e:
+            await update.message.reply_text(f"Error processing message: {e}")
+            return
+
+        message_type = result.get("message_type", "")
+        worksheet_name = result.get("worksheet_name")
+        row = result.get("row", [])
+        loco_info = result.get("loco_info", {})
 
         try:
             book = client.open(SHEET_NAME)
-            sheet = book.worksheet(worksheet_name) if worksheet_name else book.sheet1
-            sheet.append_row(row)
 
-            # Also log every message to the info sheet (Date/Loco/Information), sorted by date.
-            if extracted_fields is not None:
-                info_ws = _ensure_info_sheet(book)
-                log_date = _to_iso_date(str(extracted_fields.get("date", "")))
-                log_loco = str(extracted_fields.get("loco no", "")).strip()
-                info_text = _format_information(message_type, extracted_fields, text)
-                info_ws.append_row(["", log_date, log_loco, info_text])
+            if message_type != "loco_info_only" and row:
+                if worksheet_name:
+                    target_sheet = book.worksheet(worksheet_name)
+                else:
+                    target_sheet = book.sheet1
+                target_sheet.append_row(row)
+
+            info_ws = _ensure_info_sheet(book)
+            log_date = loco_info.get("date", "")
+            log_loco = loco_info.get("loco_no", "")
+            log_summary = loco_info.get("summary", "")
+
+            if log_date or log_loco or log_summary:
+                info_ws.append_row(["", log_date, log_loco, log_summary])
                 try:
                     info_ws.sort((2, "asc"))
                 except Exception:
                     pass
+
         except Exception as e:
             await update.message.reply_text(f"Failed to save to Google Sheet: {e}")
             return
 
-        if extracted_fields is not None:
-            await update.message.reply_text(_format_summary(message_type, extracted_fields))
-        else:
-            await update.message.reply_text("Saved to Google Sheet.")
+        await update.message.reply_text(_format_summary(message_type, loco_info))
 
 app_telegram.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
 )
 
-# ===== START WEBHOOK SERVER =====
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
 
