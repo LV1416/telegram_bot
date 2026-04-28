@@ -2,8 +2,7 @@ import re
 import json
 import os
 from datetime import datetime, timedelta
-from xai_sdk import Client
-from xai_sdk.chat import user, system
+from groq import Groq
 
 class RailwayParser:
     def __init__(self, use_ai=True):
@@ -12,24 +11,23 @@ class RailwayParser:
         self.major_sch_types = ['TOH1', 'TOH2', 'TOH3', 'TOH4', 'IOH', 'POH', 'MTR']
         self.minor_sch_types = ['IA', 'IC']
         
-        # Initialize Grok AI (xAI)
+        # Initialize Groq AI
         if use_ai:
-            api_key = os.getenv("XAI_API_KEY")
+            api_key = os.getenv("GROQ_API_KEY")
             if not api_key:
-                print("WARNING: XAI_API_KEY not set. AI features disabled.")
+                print("WARNING: GROQ_API_KEY not set. AI features disabled.")
                 self.use_ai = False
             else:
-                self.client = Client(api_key=api_key)
+                self.client = Groq(api_key=api_key)
+                self.model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
     
     def parse_message(self, text, user_id=None, username=None):
         """
-        Parse any message using Grok AI first, then validate and enrich with regex
+        Parse any message using Groq AI first, then validate and enrich with regex
         """
-        text_lower = text.lower()
-        
-        # Step 1: Try Grok AI parsing first
+        # Step 1: Try Groq AI parsing first
         if self.use_ai:
-            ai_result = self._grok_parse_message(text)
+            ai_result = self._groq_parse_message(text)
             if ai_result and ai_result.get('confidence', 0) >= 0.6:
                 # Step 2: Validate and enrich with regex
                 validated_result = self._validate_and_enrich(ai_result, text)
@@ -39,9 +37,9 @@ class RailwayParser:
         # Step 3: Fallback to regex-only parsing
         return self._regex_parse_message(text, username)
     
-    def _grok_parse_message(self, text):
+    def _groq_parse_message(self, text):
         """
-        Use Grok AI (xAI) to understand any message format
+        Use Groq AI (Llama 3.3) to understand any message format
         """
         prompt = f"""You are a railway equipment tracking assistant. Analyze this message from a railway workshop and extract structured data.
 
@@ -94,13 +92,17 @@ For any message, try your best to extract information. If uncertain, set confide
 Only respond with valid JSON. Do not include any markdown formatting or explanations."""
 
         try:
-            # Create chat with Grok
-            chat = self.client.chat.create(model="grok-3-mini")  # Using grok-3-mini for cost efficiency [citation:6]
-            chat.append(system("You are a JSON-only railway data extractor. Never output anything except valid JSON."))
-            chat.append(user(prompt))
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a JSON-only railway data extractor. Never output anything except valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=500
+            )
             
-            response = chat.sample()
-            result_text = response.content.strip()
+            result_text = response.choices[0].message.content.strip()
             
             # Clean response (remove markdown if any)
             if result_text.startswith('```json'):
@@ -115,12 +117,12 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
             return result
             
         except Exception as e:
-            print(f"Grok AI parsing error: {e}")
+            print(f"Groq AI parsing error: {e}")
             return None
     
     def _validate_and_enrich(self, ai_result, original_text):
         """
-        Validate Grok results and enrich with regex for missing fields
+        Validate Groq results and enrich with regex for missing fields
         """
         if not ai_result or not isinstance(ai_result, dict):
             return None
@@ -191,38 +193,26 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
     
     def _regex_parse_message(self, text, username):
         """
-        Fallback: Regex-only parsing when Grok AI fails
+        Fallback: Regex-only parsing when Groq AI fails
         """
         text_lower = text.lower()
         
-        # Check for schedule update
         if 'schedule' in text_lower:
             return self._regex_parse_schedule(text)
-        
-        # Check for fitment
         elif 'fit' in text_lower or 'fitted' in text_lower or 'laga' in text_lower:
             return self._regex_parse_fitment(text)
-        
-        # Check for removal
         elif 'remove' in text_lower or 'removed' in text_lower or 'nikal' in text_lower:
             return self._regex_parse_removal(text)
-        
-        # Check for status query
         elif 'status' in text_lower or 'batao' in text_lower:
             return self._regex_parse_query(text)
-        
-        # Default: general message
         else:
             return self._regex_parse_general(text, username)
     
     def _regex_parse_schedule(self, text):
-        """Regex fallback for schedule parsing"""
         result = {'type': 'SCHEDULE', 'data': {}, 'confidence': 0.7}
-        
         loco_match = re.search(r'\b(\d{5})\b', text)
         if loco_match:
             result['data']['loco_no'] = loco_match.group(1)
-        
         text_upper = text.upper()
         for sch_type in self.major_sch_types:
             if sch_type in text_upper:
@@ -235,113 +225,87 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
                     result['data']['schedule_type'] = 'MINOR'
                     result['data']['schedule_name'] = sch_type
                     break
-        
         date_match = self._extract_date(text)
         if date_match:
             result['data']['schedule_date'] = date_match
-        
         return result
     
     def _regex_parse_fitment(self, text):
-        """Regex fallback for fitment parsing"""
         result = {'type': 'FITMENT', 'data': {}, 'confidence': 0.7}
-        
         loco_match = re.search(r'\b(\d{5})\b', text)
         if loco_match:
             result['data']['loco_no'] = loco_match.group(1)
-        
         equip_match = self._extract_equipment(text)
         if equip_match:
             result['data']['equipment_type'] = equip_match['type']
             result['data']['serial_no'] = equip_match['serial']
-        
         date_match = self._extract_date(text)
         if date_match:
             result['data']['fitment_date'] = date_match
         else:
             result['data']['fitment_date'] = datetime.now().strftime('%Y-%m-%d')
-        
         result['data']['remarks'] = text
         return result
     
     def _regex_parse_removal(self, text):
-        """Regex fallback for removal parsing"""
         result = {'type': 'REMOVAL', 'data': {}, 'confidence': 0.7}
-        
         loco_match = re.search(r'\b(\d{5})\b', text)
         if loco_match:
             result['data']['loco_no'] = loco_match.group(1)
-        
         equip_match = self._extract_equipment(text)
         if equip_match:
             result['data']['equipment_type'] = equip_match['type']
             result['data']['serial_no'] = equip_match['serial']
-        
         for sch_type in self.major_sch_types + self.minor_sch_types:
             if sch_type.lower() in text.lower():
                 result['data']['overhaul_type'] = sch_type
                 break
-        
         date_match = self._extract_date(text)
         if date_match:
             result['data']['removal_date'] = date_match
         else:
             result['data']['removal_date'] = datetime.now().strftime('%Y-%m-%d')
-        
         result['data']['remarks'] = text
         return result
     
     def _regex_parse_query(self, text):
-        """Regex fallback for query parsing"""
         result = {'type': 'QUERY', 'data': {}, 'confidence': 0.7}
-        
         loco_match = re.search(r'\b(\d{5})\b', text)
         if loco_match:
             result['data']['query_type'] = 'LOCO_STATUS'
             result['data']['query_value'] = loco_match.group(1)
-        
         equip_match = self._extract_equipment(text)
         if equip_match:
             result['data']['query_type'] = 'EQUIPMENT_STATUS'
             result['data']['query_value'] = equip_match['serial']
-        
         return result
     
     def _regex_parse_general(self, text, username):
-        """Regex fallback for general messages"""
         result = {'type': 'GENERAL', 'data': {'message': text, 'user': username or 'unknown'}, 'confidence': 0.5}
-        
         loco_match = re.search(r'\b(\d{5})\b', text)
         if loco_match:
             result['data']['loco_no'] = loco_match.group(1)
-        
         return result
     
     def _extract_equipment(self, text):
-        """Extract equipment type and serial number using regex"""
         text_upper = text.upper()
-        
         for eq_type in self.equipment_types:
             pattern = rf'{eq_type}\s+([A-Z0-9/]+\s*[A-Z0-9/]*)'
             match = re.search(pattern, text_upper)
             if match:
                 return {'type': eq_type, 'serial': match.group(1).strip()}
-        
         serial_pattern = r'([A-Z0-9]{3,}[-/][A-Z0-9/]+)'
         match = re.search(serial_pattern, text_upper)
         if match:
             return {'type': 'UNKNOWN', 'serial': match.group(1)}
-        
         return None
     
     def _extract_date(self, text):
-        """Extract date from text using regex"""
         pattern = r'(\d{1,2})[-/](\d{1,2})[-/](\d{4})'
         match = re.search(pattern, text)
         if match:
             day, month, year = match.groups()
             return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-        
         months = {'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06',
                   'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'}
         for month_name, month_num in months.items():
@@ -350,24 +314,19 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
             if match:
                 day, year = match.groups()
                 return f"{year}-{month_num}-{day.zfill(2)}"
-        
         if 'today' in text.lower():
             return datetime.now().strftime('%Y-%m-%d')
         if 'yesterday' in text.lower():
             return (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        
         return None
     
     def _normalize_date(self, date_str):
-        """Convert various date formats to YYYY-MM-DD"""
         if not date_str or date_str == 'null':
             return None
-        
         patterns = [
             (r'(\d{1,2})[-/](\d{1,2})[-/](\d{4})', lambda d,m,y: f"{y}-{m.zfill(2)}-{d.zfill(2)}"),
             (r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', lambda y,m,d: f"{y}-{m.zfill(2)}-{d.zfill(2)}"),
         ]
-        
         for pattern, formatter in patterns:
             match = re.search(pattern, str(date_str))
             if match:
