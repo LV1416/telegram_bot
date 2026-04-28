@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import os
+import json
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -17,7 +18,20 @@ logger = logging.getLogger(__name__)
 # Initialize Google Sheets
 def init_google_sheets():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_name(config.CREDENTIALS_FILE, scope)
+    
+    # Check if credentials.json exists (created by config.py)
+    if os.path.exists(config.CREDENTIALS_FILE):
+        creds = ServiceAccountCredentials.from_json_keyfile_name(config.CREDENTIALS_FILE, scope)
+    else:
+        # Try to get from environment variable directly
+        creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+        if creds_json:
+            creds_dict = json.loads(creds_json)
+            from google.oauth2 import service_account
+            creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scope)
+        else:
+            raise Exception("No Google credentials found! Set GOOGLE_CREDENTIALS_JSON")
+    
     client = gspread.authorize(creds)
     sheet = client.open(config.SHEET_NAME)
     return sheet
