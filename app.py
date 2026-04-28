@@ -389,32 +389,23 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await process_schedule(data)
     await update.message.reply_text(result)
 
-async def webhook_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle incoming webhook updates"""
-    await handle_message(update, context)
-
-
-
-
-
 def main():
+    """Start the bot."""
     application = Application.builder().token(config.BOT_TOKEN).build()
+    
+    # Add command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("equipment", equipment_command))
     application.add_handler(CommandHandler("schedule", schedule_command))
+    
+    # Add message handler for all other messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, webhook_handler))
-
-    if config.WEBHOOK_URL:
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get("PORT", 8000)),
-            webhook_url=config.WEBHOOK_URL
-        )
-    else:
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Use polling - no webhook needed
+    print("🤖 Bot started with polling mode...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
