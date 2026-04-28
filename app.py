@@ -1,10 +1,12 @@
 import os
-import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 from gemini_ai import extract_structured_fields, GeminiError
+from dotenv import load_dotenv
+
+load_dotenv()
 
 INFO_SHEET_TITLE = os.getenv("INFO_SHEET_TITLE") or "Loco Info"
 
@@ -52,15 +54,13 @@ def _format_summary(message_type: str, loco_info: dict) -> str:
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SHEET_NAME = os.getenv("SHEET_NAME")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
 ]
 
-creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 
 client = gspread.authorize(creds)
 sheet = client.open(SHEET_NAME).sheet1
