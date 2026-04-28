@@ -4,7 +4,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SHEET_NAME = os.getenv("SHEET_NAME")
+SHEET_NAME = os.getenv("SHEET_NAME", "Railway_Equipment_Tracking_TKD")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+XAI_API_KEY = os.getenv("XAI_API_KEY")  # Grok API key
 
-GOOGLE_CREDENTIALS_FILE = "credentials.json"
+# Google Sheets credentials file
+CREDENTIALS_FILE = "credentials.json"
+
+# Sheet names
+SHEETS = {
+    "LOCO_MASTER": "loco_master",
+    "EQUIPMENT_MASTER": "equipment_master",
+    "LOCO_MESSAGES": "loco_messages",
+    "EQUIPMENT_HISTORY": "equipment_history",
+    "DASHBOARD": "dashboard_data"
+}
