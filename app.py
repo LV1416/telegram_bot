@@ -389,6 +389,14 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await process_schedule(data)
     await update.message.reply_text(result)
 
+async def webhook_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming webhook updates"""
+    await handle_message(update, context)
+
+
+
+
+
 def main():
     application = Application.builder().token(config.BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
@@ -397,6 +405,8 @@ def main():
     application.add_handler(CommandHandler("equipment", equipment_command))
     application.add_handler(CommandHandler("schedule", schedule_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, webhook_handler))
+
     if config.WEBHOOK_URL:
         application.run_webhook(
             listen="0.0.0.0",
