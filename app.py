@@ -1,4 +1,5 @@
 import os
+import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from telegram import Update
@@ -60,14 +61,42 @@ scope = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+_gspread_client: "gspread.Client | None" = None
 
-client = gspread.authorize(creds)
-sheet = client.open(SHEET_NAME).sheet1
+def _get_gspread_client() -> "gspread.Client":
+    """
+    Lazy-load Google Sheets client.
 
-app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
+    Supports credentials via:
+    - GOOGLE_CREDENTIALS_JSON: raw JSON string of the service account key
+    - GOOGLE_CREDENTIALS_FILE: path to credentials file (default: credentials.json)
+    """
+    global _gspread_client
+    if _gspread_client is not None:
+        return _gspread_client
 
-def _extract_identifier(text: str) -> tuple[str, str]:
+    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    creds_file = os.getenv("GOOGLE_CREDENTIALS_FILE") or "credentials.json"
+
+    if creds_json:
+        try:
+            creds_dict = json.loads(creds_json)
+        except json.JSONDecodeError as e:
+            raise RuntimeError("GOOGLE_CREDENTIALS_JSON is not valid JSON") from e
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    else:
+        if not os.path.exists(creds_file):
+            raise RuntimeError(
+                f"Missing Google credentials file: {creds_file}. "
+                "Provide GOOGLE_CREDENTIALS_JSON (recommended for deployments) "
+                "or mount a credentials file and set GOOGLE_CREDENTIALS_FILE."
+            )
+        creds = ServiceAccountCredentials.from_json_keyfile_name(creds_file, scope)
+
+    _gspread_client = gspread.authorize(creds)
+    return _gspread_client
+
+def _extract_identifier(text: str) -> tuple["str | None", str]:
     """
     Extract optional one-word identifier from message.
     If message starts with a word followed by colon or space, treat first word as identifier.
@@ -120,6 +149,10 @@ async def handle_message(update, context):
         loco_info = result.get("loco_info", {})
 
         try:
+            if not SHEET_NAME:
+                raise RuntimeError("SHEET_NAME env var is not set")
+
+            client = _get_gspread_client()
             book = client.open(SHEET_NAME)
 
             if message_type != "loco_info_only" and row:
@@ -146,12 +179,21 @@ async def handle_message(update, context):
 
         await update.message.reply_text(_format_summary(message_type, loco_info))
 
-app_telegram.add_handler(
-    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-)
+def _build_telegram_app():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN env var is not set")
+    app_telegram = ApplicationBuilder().token(BOT_TOKEN).build()
+    app_telegram.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
+    return app_telegram
 
 if __name__ == "__main__":
+    if not WEBHOOK_URL:
+        raise RuntimeError("WEBHOOK_URL env var is not set")
+
     port = int(os.environ.get("PORT", 8000))
+    app_telegram = _build_telegram_app()
 
     app_telegram.run_webhook(
         listen="0.0.0.0",
