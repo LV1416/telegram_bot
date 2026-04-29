@@ -327,67 +327,80 @@ async def get_loco_status(loco_no):
         logger.error(f"Error getting loco status: {e}")
         return f"❌ Error retrieving status: {str(e)}"
 
+
+
+def format_date(date_str):
+    try:
+        if not date_str:
+            return "-"
+        return datetime.strptime(str(date_str), "%Y-%m-%d").strftime("%d-%m-%Y")
+    except:
+        return str(date_str)
+
 async def get_equipment_history(serial_no):
     try:
         equip_master = sheet.worksheet(config.SHEETS["EQUIPMENT_MASTER"])
         history_sheet = sheet.worksheet(config.SHEETS["EQUIPMENT_HISTORY"])
         
-        # Search in both serial columns (A and B)
         all_records = equip_master.get_all_records(head=1)
         found = None
+
         for rec in all_records:
             if str(rec.get('Serial_No_MFG', '')) == serial_no or str(rec.get('Serial_No_LOC', '')) == serial_no:
                 found = rec
                 break
 
         if not found:
-            return f"❌ Equipment *{serial_no}* not found"
+            return f"❌ Equipment {serial_no} not found"
 
         # Header
-        response = f"🔩 *EQUIPMENT DETAILS*\n"
-        response += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        response = f"🔩 EQUIPMENT DETAILS\n"
+        response += f"────────────────────────\n"
 
-        # Basic Info
-        response += f"🔖 *Serial (MFG):* `{found.get('Serial_No_MFG', '-')}`\n"
-        response += f"🏷️ *Serial (LOC):* `{found.get('Serial_No_LOC', '-')}`\n"
-        response += f"⚙️ *Type:* {found.get('Equipment_Type', '-')}\n"
-        response += f"🏭 *Make:* {found.get('Make', '-')}\n"
-        response += f"📅 *Mfg Date:* {found.get('Mfg_Date', '-')}\n"
+        # Details (aligned)
+        response += f"Serial MFG   : {found.get('Serial_No_MFG', '-')}\n"
+        response += f"Serial LOC   : {found.get('Serial_No_LOC', '-')}\n"
+        response += f"Type         : {found.get('Equipment_Type', '-')}\n"
+        response += f"Make         : {found.get('Make', '-')}\n"
+        response += f"Mfg Date     : {format_date(found.get('Mfg_Date'))}\n\n"
 
-        # Loco Info
-        response += f"\n🚆 *Current Loco:* {found.get('Current_Loco', 'STORAGE')}\n"
-        response += f"📆 *Fitment Date:* {found.get('Fitment_Date', '-')}\n"
+        response += f"Current Loco : {found.get('Current_Loco', 'STORAGE')}\n"
+        response += f"Fitment Date : {format_date(found.get('Fitment_Date'))}\n\n"
 
-        # Overhaul Info
-        response += f"\n🔧 *Last Overhaul:* {found.get('Last_Overhaul_Type', '-')}"
-        response += f" ({found.get('Last_Overhaul_Date', '-')})\n"
-        response += f"⏳ *Next Due:* {found.get('Next_Overhaul_Due', '-')}\n"
-
-        # Status
-        response += f"📌 *Status:* {found.get('Status', '-')}\n"
+        response += f"Last OH      : {found.get('Last_Overhaul_Type', '-')} ({format_date(found.get('Last_Overhaul_Date'))})\n"
+        response += f"Next Due     : {format_date(found.get('Next_Overhaul_Due'))}\n"
+        response += f"Status       : {found.get('Status', '-')}\n"
 
         if found.get('Notes'):
-            response += f"📝 *Notes:* {found.get('Notes')}\n"
+            response += f"Notes        : {found.get('Notes')}\n"
 
-        # History Section
-        response += f"\n📜 *RECENT HISTORY*\n"
-        response += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        # History
+        response += f"\n📜 HISTORY (Last 10)\n"
+        response += f"────────────────────────\n"
 
         all_history = history_sheet.get_all_records()
         equipment_history = [h for h in all_history if h.get('Serial_No') == serial_no]
 
         if equipment_history:
             for hist in equipment_history[-10:]:
-                response += f"🔹 `{hist.get('Event_Date', '-')}` | {hist.get('Event_Type', '-')}\n"
+                date = format_date(hist.get('Event_Date'))
+                event = hist.get('Event_Type', '-')
+                from_loco = hist.get('From_Loco', '')
+                to_loco = hist.get('To_Loco', '')
+                remarks = hist.get('Remarks', '')
 
-                if hist.get('From_Loco') or hist.get('To_Loco'):
-                    response += f"   🔁 {hist.get('From_Loco', '-')} ➝ {hist.get('To_Loco', '-')}\n"
+                line = f"{date} | {event}"
 
-                if hist.get('Remarks'):
-                    response += f"   💬 {hist.get('Remarks', '')[:60]}\n"
+                if from_loco or to_loco:
+                    line += f" | {from_loco} -> {to_loco}"
+
+                response += line + "\n"
+
+                if remarks:
+                    response += f"   {remarks[:60]}\n"
 
         else:
-            response += "⚠️ No history available\n"
+            response += "No history available\n"
 
         return response
 
