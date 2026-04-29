@@ -331,36 +331,70 @@ async def get_equipment_history(serial_no):
     try:
         equip_master = sheet.worksheet(config.SHEETS["EQUIPMENT_MASTER"])
         history_sheet = sheet.worksheet(config.SHEETS["EQUIPMENT_HISTORY"])
-        cell = equip_master.find(serial_no)
-        if not cell:
-            return f"❌ Equipment {serial_no} not found"
-        row = equip_master.row_values(cell.row)
-        response = f"🔧 EQUIPMENT: {serial_no}\n\n"
-        response += f"📌 Type: {row[1]}\n"
-        response += f"🏭 Make: {row[2]}\n"
-        response += f"📅 Mfg Date: {row[3]}\n"
-        response += f"📍 Current Loco: {row[4] or 'STORAGE'}\n"
-        response += f"📅 Fitment Date: {row[5]}\n"
-        response += f"🔨 Last Overhaul: {row[7]} ({row[6]})\n"
-        response += f"📊 Next Overhaul Due: {row[8]}\n"
-        response += f"✅ Status: {row[9]}\n\n"
-        response += "📜 Complete History:\n"
+        
+        # Search in both serial columns (A and B)
+        all_records = equip_master.get_all_records(head=1)
+        found = None
+        for rec in all_records:
+            if str(rec.get('Serial_No_MFG', '')) == serial_no or str(rec.get('Serial_No_LOC', '')) == serial_no:
+                found = rec
+                break
+
+        if not found:
+            return f"❌ Equipment *{serial_no}* not found"
+
+        # Header
+        response = f"🔩 *EQUIPMENT DETAILS*\n"
+        response += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+
+        # Basic Info
+        response += f"🔖 *Serial (MFG):* `{found.get('Serial_No_MFG', '-')}`\n"
+        response += f"🏷️ *Serial (LOC):* `{found.get('Serial_No_LOC', '-')}`\n"
+        response += f"⚙️ *Type:* {found.get('Equipment_Type', '-')}\n"
+        response += f"🏭 *Make:* {found.get('Make', '-')}\n"
+        response += f"📅 *Mfg Date:* {found.get('Mfg_Date', '-')}\n"
+
+        # Loco Info
+        response += f"\n🚆 *Current Loco:* {found.get('Current_Loco', 'STORAGE')}\n"
+        response += f"📆 *Fitment Date:* {found.get('Fitment_Date', '-')}\n"
+
+        # Overhaul Info
+        response += f"\n🔧 *Last Overhaul:* {found.get('Last_Overhaul_Type', '-')}"
+        response += f" ({found.get('Last_Overhaul_Date', '-')})\n"
+        response += f"⏳ *Next Due:* {found.get('Next_Overhaul_Due', '-')}\n"
+
+        # Status
+        response += f"📌 *Status:* {found.get('Status', '-')}\n"
+
+        if found.get('Notes'):
+            response += f"📝 *Notes:* {found.get('Notes')}\n"
+
+        # History Section
+        response += f"\n📜 *RECENT HISTORY*\n"
+        response += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+
         all_history = history_sheet.get_all_records()
         equipment_history = [h for h in all_history if h.get('Serial_No') == serial_no]
+
         if equipment_history:
             for hist in equipment_history[-10:]:
-                response += f"• {hist.get('Event_Date')}: {hist.get('Event_Type')} "
-                if hist.get('From_Loco'):
-                    response += f"from {hist.get('From_Loco')} "
-                if hist.get('To_Loco'):
-                    response += f"to {hist.get('To_Loco')} "
-                response += f"- {hist.get('Remarks', '')[:50]}\n"
+                response += f"🔹 `{hist.get('Event_Date', '-')}` | {hist.get('Event_Type', '-')}\n"
+
+                if hist.get('From_Loco') or hist.get('To_Loco'):
+                    response += f"   🔁 {hist.get('From_Loco', '-')} ➝ {hist.get('To_Loco', '-')}\n"
+
+                if hist.get('Remarks'):
+                    response += f"   💬 {hist.get('Remarks', '')[:60]}\n"
+
         else:
-            response += "No history found\n"
+            response += "⚠️ No history available\n"
+
         return response
+
     except Exception as e:
         logger.error(f"Error getting equipment history: {e}")
         return f"❌ Error retrieving history: {str(e)}"
+
 
 async def equipment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
