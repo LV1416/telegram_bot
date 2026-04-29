@@ -17,7 +17,7 @@ from railway_parser import RailwayParser
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Simple HTTP handler for Koyeb health checks
+# ---------- Health check server for Koyeb ----------
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -31,17 +31,14 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', 8000), HealthHandler)
     server.serve_forever()
 
-# Initialize Google Sheets using environment variable
+# ---------- Google Sheets initialization ----------
 def init_google_sheets():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    
     creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
     if not creds_json:
         raise Exception("GOOGLE_CREDENTIALS_JSON environment variable not set")
-    
     creds_dict = json.loads(creds_json)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    
     client = gspread.authorize(creds)
     sheet = client.open(config.SHEET_NAME)
     return sheet
@@ -49,6 +46,18 @@ def init_google_sheets():
 sheet = init_google_sheets()
 parser = RailwayParser(use_ai=True)
 
+# ---------- Helper to parse DD-MM-YYYY from sheet ----------
+def parse_date_dmy(date_str):
+    """Convert DD-MM-YYYY string to datetime object, or return None."""
+    if not date_str or date_str in ['', '-', 'N/A']:
+        return None
+    try:
+        # Handle possible Excel serial numbers? Assume string.
+        return datetime.strptime(str(date_str).strip(), '%d-%m-%Y')
+    except:
+        return None
+
+# ---------- Command Handlers ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = """
 🚂 Railway Equipment Tracking Bot (Powered by Groq AI)
@@ -121,6 +130,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if loco_match:
         loco_no = loco_match.group(1)
     
+    # Always save message
     messages_sheet.append_row([
         timestamp.strftime('%Y-%m-%d %H:%M:%S'),
         loco_no or 'N/A',
@@ -146,6 +156,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("✅ Message logged (No loco number found)")
 
+# ---------- Schedule Processing ----------
 async def process_schedule(data):
     try:
         loco_master = sheet.worksheet(config.SHEETS["LOCO_MASTER"])
@@ -158,7 +169,7 @@ async def process_schedule(data):
         row_num = cell.row
         schedule_type = data.get('schedule_type', '')
         schedule_name = data.get('schedule_name', '')
-        schedule_date = data.get('schedule_date', '')
+        schedule_date = data.get('schedule_date', '')  # expected DD-MM-YYYY
         next_due = data.get('next_due', '')
         updates = []
         if schedule_type == 'MAJOR' and schedule_name:
@@ -181,29 +192,36 @@ async def process_schedule(data):
         logger.error(f"Error processing schedule: {e}")
         return f"❌ Error updating schedule: {str(e)}"
 
+# ---------- Fitment Processing ----------
 async def process_fitment(data, timestamp):
     try:
         loco_no = data.get('loco_no')
         equipment_type = data.get('equipment_type')
         serial_no = data.get('serial_no')
-        fitment_date = data.get('date') or data.get('fitment_date') or timestamp.strftime('%Y-%m-%d')
+        fitment_date = data.get('date') or data.get('fitment_date') or timestamp.strftime('%d-%m-%Y')
         remarks = data.get('remarks', '')
         if not loco_no or not serial_no:
             return f"❌ Missing loco number or equipment serial number"
+        
         equip_master = sheet.worksheet(config.SHEETS["EQUIPMENT_MASTER"])
-        try:
-            cell = equip_master.find(serial_no)
-            if cell:
-                row_num = cell.row
-                equip_master.update_cell(row_num, 5, loco_no)
-                equip_master.update_cell(row_num, 6, fitment_date)
-                equip_master.update_cell(row_num, 10, "IN_SERVICE")
-                if remarks:
-                    equip_master.update_cell(row_num, 11, remarks)
-            else:
-                return f"❌ Equipment {serial_no} not found. Please add it first"
-        except gspread.exceptions.CellNotFound:
+        # Search in both serial columns (A and B)
+        all_records = equip_master.get_all_records(head=1)
+        found_row = None
+        for idx, rec in enumerate(all_records, start=2):
+            if str(rec.get('Serial_No_MFG', '')) == serial_no or str(rec.get('Serial_No_LOC', '')) == serial_no:
+                found_row = idx
+                break
+        if not found_row:
             return f"❌ Equipment {serial_no} not found. Please add it first"
+        
+        # Update Current_Loco (column F), Fitment_Date (G), Status (K)
+        equip_master.update_cell(found_row, 6, loco_no)   # Current_Loco
+        equip_master.update_cell(found_row, 7, fitment_date)  # Fitment_Date
+        equip_master.update_cell(found_row, 11, "IN_SERVICE")  # Status (col K)
+        if remarks:
+            equip_master.update_cell(found_row, 12, remarks)   # Notes (col L)
+        
+        # Log to equipment_history
         history_sheet = sheet.worksheet(config.SHEETS["EQUIPMENT_HISTORY"])
         history_sheet.append_row([
             serial_no,
@@ -215,6 +233,7 @@ async def process_fitment(data, timestamp):
             "",
             remarks
         ])
+        
         return f"""✅ Equipment Fitted Successfully
 
 📍 Loco: {loco_no}
@@ -227,32 +246,47 @@ Equipment has been marked as IN_SERVICE."""
         logger.error(f"Error processing fitment: {e}")
         return f"❌ Error recording fitment: {str(e)}"
 
+# ---------- Removal Processing ----------
 async def process_removal(data, timestamp):
     try:
         loco_no = data.get('loco_no')
         serial_no = data.get('serial_no')
-        removal_date = data.get('date') or data.get('removal_date') or timestamp.strftime('%Y-%m-%d')
+        removal_date = data.get('date') or data.get('removal_date') or timestamp.strftime('%d-%m-%Y')
         overhaul_type = data.get('overhaul_type', '')
         workshop = data.get('workshop', '')
         remarks = data.get('remarks', '')
         if not serial_no:
             return f"❌ No equipment serial number found"
+        
         equip_master = sheet.worksheet(config.SHEETS["EQUIPMENT_MASTER"])
-        try:
-            cell = equip_master.find(serial_no)
-            if not cell:
-                return f"❌ Equipment {serial_no} not found"
-            row_num = cell.row
-            if overhaul_type:
-                equip_master.update_cell(row_num, 8, overhaul_type)
-                equip_master.update_cell(row_num, 7, removal_date)
-                due_date = datetime.strptime(removal_date, '%Y-%m-%d') + timedelta(days=365)
-                equip_master.update_cell(row_num, 9, due_date.strftime('%Y-%m-%d'))
-            equip_master.update_cell(row_num, 10, "UNDER_OVERHAUL")
-            equip_master.update_cell(row_num, 5, "")
-            equip_master.update_cell(row_num, 6, "")
-        except gspread.exceptions.CellNotFound:
+        all_records = equip_master.get_all_records(head=1)
+        found_row = None
+        for idx, rec in enumerate(all_records, start=2):
+            if str(rec.get('Serial_No_MFG', '')) == serial_no or str(rec.get('Serial_No_LOC', '')) == serial_no:
+                found_row = idx
+                break
+        if not found_row:
             return f"❌ Equipment {serial_no} not found"
+        
+        if overhaul_type:
+            equip_master.update_cell(found_row, 8, overhaul_type)   # Last_Overhaul_Type (col I)
+            equip_master.update_cell(found_row, 7, removal_date)    # Last_Overhaul_Date (col H? Wait careful)
+            # Actually after your 12-col layout:
+            # H = Last_Overhaul_Date, I = Last_Overhaul_Type, J = Next_Overhaul_Due
+            equip_master.update_cell(found_row, 8, removal_date)      # H
+            equip_master.update_cell(found_row, 9, overhaul_type)     # I
+            # Calculate next due (add 1 year) - store as DD-MM-YYYY
+            try:
+                due_date_obj = datetime.strptime(removal_date, '%d-%m-%Y') + timedelta(days=365)
+                next_due = due_date_obj.strftime('%d-%m-%Y')
+                equip_master.update_cell(found_row, 10, next_due)     # J
+            except:
+                pass
+        
+        equip_master.update_cell(found_row, 11, "UNDER_OVERHAUL")   # Status (K)
+        equip_master.update_cell(found_row, 6, "")   # Clear Current_Loco (F)
+        equip_master.update_cell(found_row, 7, "")   # Clear Fitment_Date (G)
+        
         history_sheet = sheet.worksheet(config.SHEETS["EQUIPMENT_HISTORY"])
         history_sheet.append_row([
             serial_no,
@@ -264,6 +298,7 @@ async def process_removal(data, timestamp):
             overhaul_type,
             remarks
         ])
+        
         return f"""✅ Equipment Removed Successfully
 
 🔧 Equipment: {serial_no}
@@ -277,6 +312,7 @@ Equipment status: UNDER_OVERHAUL"""
         logger.error(f"Error processing removal: {e}")
         return f"❌ Error recording removal: {str(e)}"
 
+# ---------- Query Processing ----------
 async def process_query(data):
     query_type = data.get('query_type', '')
     query_value = data.get('query_value', '')
@@ -287,15 +323,19 @@ async def process_query(data):
     else:
         return "❌ Please specify a loco number or equipment serial number"
 
+# ---------- Loco Status (Fixed equipment display) ----------
 async def get_loco_status(loco_no):
     try:
         loco_master = sheet.worksheet(config.SHEETS["LOCO_MASTER"])
         equip_master = sheet.worksheet(config.SHEETS["EQUIPMENT_MASTER"])
         messages_sheet = sheet.worksheet(config.SHEETS["LOCO_MESSAGES"])
+        
+        # Find loco in master
         cell = loco_master.find(loco_no)
         if not cell:
             return f"❌ Loco {loco_no} not found"
         row = loco_master.row_values(cell.row)
+        # Columns: A:Loco_No, B:Type, C:DOC, D:Last_Major_Sch_Type, E:Last_Major_Sch_Date, F:Last_Minor_Sch_Type, G:Last_Minor_Sch_Date, H:Next_Major_Due, I:Status
         response = f"🚂 LOCO {loco_no} STATUS\n\n"
         response += f"📌 Type: {row[1]}\n"
         response += f"📅 DOC: {row[2]}\n"
@@ -303,19 +343,33 @@ async def get_loco_status(loco_no):
         response += f"⚙️ Last Minor: {row[5]} ({row[6]})\n"
         response += f"📊 Next Major Due: {row[7]}\n"
         response += f"✅ Status: {row[8]}\n\n"
+        
+        # Get equipment fitted to this loco
         response += "🔧 Equipment Fitted:\n"
-        all_equipment = equip_master.get_all_records()
-        fitted = [e for e in all_equipment if str(e.get('Current_Loco', '')) == str(loco_no)]
+        all_equipment = equip_master.get_all_records(head=1)  # returns list of dicts with keys from row 1
+        fitted = []
+        for eq in all_equipment:
+            # Current_Loco is column F (index 5 in zero-based list)
+            current_loco = eq.get('Current_Loco')
+            if current_loco and str(current_loco).strip() == str(loco_no):
+                fitted.append(eq)
+        
         if fitted:
             for eq in fitted:
+                equip_type = eq.get('Equipment_Type', '')
+                serial_mfg = eq.get('Serial_No_MFG', '')
+                serial_loc = eq.get('Serial_No_LOC', '')
+                serial_display = serial_loc if serial_loc else serial_mfg
                 status_icon = "✅" if eq.get('Status') == 'IN_SERVICE' else "⚠️"
-                response += f"{status_icon} {eq.get('Equipment_Type')}: {eq.get('Serial_No')} "
-                if eq.get('Next_Overhaul_Due'):
-                    response += f"(Overhaul due: {eq.get('Next_Overhaul_Due')})\n"
-                else:
-                    response += "\n"
+                response += f"{status_icon} {equip_type}: {serial_display}"
+                next_overhaul = eq.get('Next_Overhaul_Due')
+                if next_overhaul:
+                    response += f" (Overhaul due: {next_overhaul})"
+                response += "\n"
         else:
             response += "No equipment fitted\n"
+        
+        # Recent messages
         response += f"\n📝 Recent Messages (last 5):\n"
         all_messages = messages_sheet.get_all_records()
         loco_messages = [m for m in all_messages if str(m.get('Loco_No', '')) == str(loco_no)]
@@ -327,16 +381,7 @@ async def get_loco_status(loco_no):
         logger.error(f"Error getting loco status: {e}")
         return f"❌ Error retrieving status: {str(e)}"
 
-
-
-def format_date(date_str):
-    try:
-        if not date_str:
-            return "-"
-        return datetime.strptime(str(date_str), "%Y-%m-%d").strftime("%d-%m-%Y")
-    except:
-        return str(date_str)
-
+# ---------- Equipment History (12 columns) ----------
 async def get_equipment_history(serial_no):
     try:
         equip_master = sheet.worksheet(config.SHEETS["EQUIPMENT_MASTER"])
@@ -344,71 +389,47 @@ async def get_equipment_history(serial_no):
         
         all_records = equip_master.get_all_records(head=1)
         found = None
-
         for rec in all_records:
             if str(rec.get('Serial_No_MFG', '')) == serial_no or str(rec.get('Serial_No_LOC', '')) == serial_no:
                 found = rec
                 break
-
         if not found:
             return f"❌ Equipment {serial_no} not found"
-
-        # Header
-        response = f"🔩 EQUIPMENT DETAILS\n"
-        response += f"────────────────────────\n"
-
-        # Details (aligned)
-        response += f"Serial MFG   : {found.get('Serial_No_MFG', '-')}\n"
-        response += f"Serial LOC   : {found.get('Serial_No_LOC', '-')}\n"
-        response += f"Type         : {found.get('Equipment_Type', '-')}\n"
-        response += f"Make         : {found.get('Make', '-')}\n"
-        response += f"Mfg Date     : {format_date(found.get('Mfg_Date'))}\n\n"
-
-        response += f"Current Loco : {found.get('Current_Loco', 'STORAGE')}\n"
-        response += f"Fitment Date : {format_date(found.get('Fitment_Date'))}\n\n"
-
-        response += f"Last OH      : {found.get('Last_Overhaul_Type', '-')} ({format_date(found.get('Last_Overhaul_Date'))})\n"
-        response += f"Next Due     : {format_date(found.get('Next_Overhaul_Due'))}\n"
-        response += f"Status       : {found.get('Status', '-')}\n"
-
+        
+        response = f"🔧 EQUIPMENT: {serial_no}\n\n"
+        response += f"📌 MFG Serial: {found.get('Serial_No_MFG', '')}\n"
+        response += f"📍 LOC Serial: {found.get('Serial_No_LOC', '')}\n"
+        response += f"🔧 Type: {found.get('Equipment_Type', '')}\n"
+        response += f"🏭 Make: {found.get('Make', '')}\n"
+        response += f"📅 Mfg Date: {found.get('Mfg_Date', '')}\n"
+        response += f"🚂 Current Loco: {found.get('Current_Loco', 'STORAGE')}\n"
+        response += f"📅 Fitment Date: {found.get('Fitment_Date', '')}\n"
+        response += f"🔨 Last Overhaul: {found.get('Last_Overhaul_Type', '')} ({found.get('Last_Overhaul_Date', '')})\n"
+        response += f"📊 Next Overhaul Due: {found.get('Next_Overhaul_Due', '')}\n"
+        response += f"✅ Status: {found.get('Status', '')}\n"
         if found.get('Notes'):
-            response += f"Notes        : {found.get('Notes')}\n"
-
-        # History
-        response += f"\n📜 HISTORY (Last 10)\n"
-        response += f"────────────────────────\n"
-
+            response += f"📝 Notes: {found.get('Notes', '')}\n"
+        
+        # History from equipment_history sheet (based on serial_no)
+        response += "\n📜 Complete History:\n"
         all_history = history_sheet.get_all_records()
-        equipment_history = [h for h in all_history if h.get('Serial_No') == serial_no]
-
-        if equipment_history:
-            for hist in equipment_history[-10:]:
-                date = format_date(hist.get('Event_Date'))
-                event = hist.get('Event_Type', '-')
-                from_loco = hist.get('From_Loco', '')
-                to_loco = hist.get('To_Loco', '')
-                remarks = hist.get('Remarks', '')
-
-                line = f"{date} | {event}"
-
-                if from_loco or to_loco:
-                    line += f" | {from_loco} -> {to_loco}"
-
-                response += line + "\n"
-
-                if remarks:
-                    response += f"   {remarks[:60]}\n"
-
+        eq_history = [h for h in all_history if h.get('Serial_No') == serial_no]
+        if eq_history:
+            for hist in eq_history[-10:]:
+                response += f"• {hist.get('Event_Date')}: {hist.get('Event_Type')} "
+                if hist.get('From_Loco'):
+                    response += f"from {hist.get('From_Loco')} "
+                if hist.get('To_Loco'):
+                    response += f"to {hist.get('To_Loco')} "
+                response += f"- {hist.get('Remarks', '')[:50]}\n"
         else:
-            response += "No history available\n"
-
+            response += "No history found\n"
         return response
-
     except Exception as e:
         logger.error(f"Error getting equipment history: {e}")
         return f"❌ Error retrieving history: {str(e)}"
 
-
+# ---------- Command handlers ----------
 async def equipment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /equipment <serial_no>\nExample: /equipment TKD/2024/31")
@@ -430,15 +451,15 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Usage: /schedule <loco_no> <MAJOR/MINOR> <type> <date> [next_due]\n\n"
             "Examples:\n"
-            "/schedule 22229 MAJOR TOH 2025-06-24\n"
-            "/schedule 22229 MAJOR TOH 2025-06-24 next_due 2026-06-24\n"
-            "/schedule 22061 MINOR IA 2025-02-14"
+            "/schedule 22229 MAJOR TOH 24-06-2025\n"
+            "/schedule 22229 MAJOR TOH 24-06-2025 next_due 24-06-2026\n"
+            "/schedule 22061 MINOR IA 14-02-2025"
         )
         return
     loco_no = context.args[0]
     sch_type = context.args[1].upper()
     sch_name = context.args[2].upper()
-    sch_date = context.args[3]
+    sch_date = context.args[3]   # Expected DD-MM-YYYY
     data = {
         'loco_no': loco_no,
         'schedule_type': sch_type,
@@ -450,21 +471,20 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await process_schedule(data)
     await update.message.reply_text(result)
 
+# ---------- Main ----------
 def main():
-    # Start health check server on port 8000 (required by Koyeb)
+    # Start health check server (required for Koyeb)
     health_thread = Thread(target=run_health_server, daemon=True)
     health_thread.start()
-    print("✅ Health check server running on port 8000")
+    print("✅ Health check server running on port 8000 (Koyeb)")
 
     application = Application.builder().token(config.BOT_TOKEN).build()
-    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("equipment", equipment_command))
     application.add_handler(CommandHandler("schedule", schedule_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
     print("🤖 Bot started with polling mode...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
