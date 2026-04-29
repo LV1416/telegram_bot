@@ -15,86 +15,80 @@ from railway_parser import RailwayParser
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Google Sheets
+# Initialize Google Sheets using environment variable
 def init_google_sheets():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     
-    # Check if credentials.json exists (created by config.py)
-    if os.path.exists(config.CREDENTIALS_FILE):
-        creds = ServiceAccountCredentials.from_json_keyfile_name(config.CREDENTIALS_FILE, scope)
-    else:
-        # Try to get from environment variable directly
-        creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-        if creds_json:
-            creds_dict = json.loads(creds_json)
-            from google.oauth2 import service_account
-            creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scope)
-        else:
-            raise Exception("No Google credentials found! Set GOOGLE_CREDENTIALS_JSON")
+    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    if not creds_json:
+        raise Exception("GOOGLE_CREDENTIALS_JSON environment variable not set")
+    
+    creds_dict = json.loads(creds_json)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     
     client = gspread.authorize(creds)
     sheet = client.open(config.SHEET_NAME)
     return sheet
 
 sheet = init_google_sheets()
-parser = RailwayParser(use_ai=True)
+parser = RailwayParser(use_ai=True)  # Uses Groq AI
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = """
-🚂 **Railway Equipment Tracking Bot** (Powered by Grok AI)
+🚂 Railway Equipment Tracking Bot (Powered by Groq AI)
 
-**Commands:**
+Commands:
 /start - Show this menu
 /help - Get help
 /status <loco_no> - Get loco status
 /equipment <serial_no> - Get equipment history
 
-**Just type naturally - AI understands:**
-• "22229: MPH TKD/2024/31 fitted on 19/09/2024"
-• "SCHEDULE 22229 MAJOR TOH done 24/06/2025 next_due 24/06/2026"
-• "remove MVRH 14623 from 22229 for POH"
-• "status of 22229"
-• "31642 panto pt1 sr no 1280 mersen fitted"
-• "22721 panto failure AM-12 abnormal"
+Just type naturally - AI understands:
+• 22229: MPH TKD/2024/31 fitted on 19/09/2024
+• SCHEDULE 22229 MAJOR TOH done 24/06/2025 next_due 24/06/2026
+• remove MVRH 14623 from 22229 for POH
+• status of 22229
+• 31642 panto pt1 sr no 1280 mersen fitted
+• 22721 panto failure AM-12 abnormal
 
 All messages are automatically logged and tracked with AI understanding!
     """
-    await update.message.reply_text(welcome_text, parse_mode='Markdown')
+    await update.message.reply_text(welcome_text)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
-📖 **How to use this bot** (AI understands natural language)
+How to use this bot (AI understands natural language)
 
-**1. Log Equipment Fitment:**
-`22229: MPH TKD/2024/31 fitted on 19/09/2024`
+1. Log Equipment Fitment:
+22229: MPH TKD/2024/31 fitted on 19/09/2024
 
-**2. Log Equipment Removal:**
-`remove MVRH 14623 from 22229 for POH`
+2. Log Equipment Removal:
+remove MVRH 14623 from 22229 for POH
 
-**3. Update Schedule:**
-`SCHEDULE 22229 MAJOR TOH done 24/06/2025 next_due 24/06/2026`
+3. Update Schedule:
+SCHEDULE 22229 MAJOR TOH done 24/06/2025 next_due 24/06/2026
 
-**4. Update Minor Schedule:**
-`SCHEDULE 22061 MINOR IA done 14/02/2025`
+4. Update Minor Schedule:
+SCHEDULE 22061 MINOR IA done 14/02/2025
 
-**5. Check Status:**
-`status of 22229`
+5. Check Status:
+status of 22229
 
-**6. General Notes (AI will extract info):**
-`22229: Panto Pt1 Sr No. 1280 Mersen PCU fitted, TOH2`
+6. General Notes (AI will extract info):
+22229: Panto Pt1 Sr No. 1280 Mersen PCU fitted, TOH2
 
-**7. Equipment Search:**
-`/equipment TKD/2024/31`
+7. Equipment Search:
+/equipment TKD/2024/31
 
-**8. Failure Report:**
-`22721 panto failure AM-12 abnormal`
+8. Failure Report:
+22721 panto failure AM-12 abnormal
 
-**9. Repair Completion:**
-`31450 PT2 repair attended due to air leakage`
+9. Repair Completion:
+31450 PT2 repair attended due to air leakage
 
 Simply type your message naturally - the AI will understand and update the sheets automatically!
     """
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_text(help_text)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
@@ -129,7 +123,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(result)
     elif parsed['type'] == 'QUERY':
         result = await process_query(parsed['data'])
-        await update.message.reply_text(result, parse_mode='Markdown')
+        await update.message.reply_text(result)
     else:
         if loco_no:
             await update.message.reply_text(f"✅ Message logged for Loco {loco_no}")
@@ -205,11 +199,13 @@ async def process_fitment(data, timestamp):
             "",
             remarks
         ])
-        return f"""✅ **Equipment Fitted Successfully**
+        return f"""✅ Equipment Fitted Successfully
+
 📍 Loco: {loco_no}
 🔧 Equipment: {equipment_type or 'Unknown'} ({serial_no})
 📅 Fitment Date: {fitment_date}
 📝 Notes: {remarks[:100]}...
+
 Equipment has been marked as IN_SERVICE."""
     except Exception as e:
         logger.error(f"Error processing fitment: {e}")
@@ -252,12 +248,14 @@ async def process_removal(data, timestamp):
             overhaul_type,
             remarks
         ])
-        return f"""✅ **Equipment Removed Successfully**
+        return f"""✅ Equipment Removed Successfully
+
 🔧 Equipment: {serial_no}
 📍 Removed from Loco: {loco_no or 'Unknown'}
 📅 Removal Date: {removal_date}
 🔨 Overhaul Type: {overhaul_type or 'Not specified'}
 🏭 Workshop: {workshop or 'Not specified'}
+
 Equipment status: UNDER_OVERHAUL"""
     except Exception as e:
         logger.error(f"Error processing removal: {e}")
@@ -282,27 +280,27 @@ async def get_loco_status(loco_no):
         if not cell:
             return f"❌ Loco {loco_no} not found"
         row = loco_master.row_values(cell.row)
-        response = f"🚂 **LOCO {loco_no} STATUS**\n\n"
-        response += f"📌 **Type:** {row[1]}\n"
-        response += f"📅 **DOC:** {row[2]}\n"
-        response += f"🔧 **Last Major:** {row[3]} ({row[4]})\n"
-        response += f"⚙️ **Last Minor:** {row[5]} ({row[6]})\n"
-        response += f"📊 **Next Major Due:** {row[7]}\n"
-        response += f"✅ **Status:** {row[8]}\n\n"
-        response += "**🔧 Equipment Fitted:**\n"
+        response = f"🚂 LOCO {loco_no} STATUS\n\n"
+        response += f"📌 Type: {row[1]}\n"
+        response += f"📅 DOC: {row[2]}\n"
+        response += f"🔧 Last Major: {row[3]} ({row[4]})\n"
+        response += f"⚙️ Last Minor: {row[5]} ({row[6]})\n"
+        response += f"📊 Next Major Due: {row[7]}\n"
+        response += f"✅ Status: {row[8]}\n\n"
+        response += "🔧 Equipment Fitted:\n"
         all_equipment = equip_master.get_all_records()
         fitted = [e for e in all_equipment if str(e.get('Current_Loco', '')) == str(loco_no)]
         if fitted:
             for eq in fitted:
                 status_icon = "✅" if eq.get('Status') == 'IN_SERVICE' else "⚠️"
-                response += f"{status_icon} **{eq.get('Equipment_Type')}:** {eq.get('Serial_No')} "
+                response += f"{status_icon} {eq.get('Equipment_Type')}: {eq.get('Serial_No')} "
                 if eq.get('Next_Overhaul_Due'):
                     response += f"(Overhaul due: {eq.get('Next_Overhaul_Due')})\n"
                 else:
                     response += "\n"
         else:
             response += "No equipment fitted\n"
-        response += f"\n**📝 Recent Messages (last 5):**\n"
+        response += f"\n📝 Recent Messages (last 5):\n"
         all_messages = messages_sheet.get_all_records()
         loco_messages = [m for m in all_messages if str(m.get('Loco_No', '')) == str(loco_no)]
         for msg in loco_messages[-5:]:
@@ -321,16 +319,16 @@ async def get_equipment_history(serial_no):
         if not cell:
             return f"❌ Equipment {serial_no} not found"
         row = equip_master.row_values(cell.row)
-        response = f"🔧 **EQUIPMENT: {serial_no}**\n\n"
-        response += f"📌 **Type:** {row[1]}\n"
-        response += f"🏭 **Make:** {row[2]}\n"
-        response += f"📅 **Mfg Date:** {row[3]}\n"
-        response += f"📍 **Current Loco:** {row[4] or 'STORAGE'}\n"
-        response += f"📅 **Fitment Date:** {row[5]}\n"
-        response += f"🔨 **Last Overhaul:** {row[7]} ({row[6]})\n"
-        response += f"📊 **Next Overhaul Due:** {row[8]}\n"
-        response += f"✅ **Status:** {row[9]}\n\n"
-        response += "**📜 Complete History:**\n"
+        response = f"🔧 EQUIPMENT: {serial_no}\n\n"
+        response += f"📌 Type: {row[1]}\n"
+        response += f"🏭 Make: {row[2]}\n"
+        response += f"📅 Mfg Date: {row[3]}\n"
+        response += f"📍 Current Loco: {row[4] or 'STORAGE'}\n"
+        response += f"📅 Fitment Date: {row[5]}\n"
+        response += f"🔨 Last Overhaul: {row[7]} ({row[6]})\n"
+        response += f"📊 Next Overhaul Due: {row[8]}\n"
+        response += f"✅ Status: {row[9]}\n\n"
+        response += "📜 Complete History:\n"
         all_history = history_sheet.get_all_records()
         equipment_history = [h for h in all_history if h.get('Serial_No') == serial_no]
         if equipment_history:
@@ -354,7 +352,7 @@ async def equipment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     serial_no = ' '.join(context.args)
     result = await get_equipment_history(serial_no)
-    await update.message.reply_text(result, parse_mode='Markdown')
+    await update.message.reply_text(result)
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -362,7 +360,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     loco_no = context.args[0]
     result = await get_loco_status(loco_no)
-    await update.message.reply_text(result, parse_mode='Markdown')
+    await update.message.reply_text(result)
 
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 4:
@@ -390,20 +388,16 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(result)
 
 def main():
-    """Start the bot."""
     application = Application.builder().token(config.BOT_TOKEN).build()
     
-    # Add command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("equipment", equipment_command))
     application.add_handler(CommandHandler("schedule", schedule_command))
-    
-    # Add message handler for all other messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Use polling - no webhook needed
+    # Use polling (no webhook needed)
     print("🤖 Bot started with polling mode...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
