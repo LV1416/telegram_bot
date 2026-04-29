@@ -4,7 +4,9 @@ import re
 import os
 import json
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -14,6 +16,20 @@ from railway_parser import RailwayParser
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Simple HTTP handler for Koyeb health checks
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+    def log_message(self, format, *args):
+        pass
+
+def run_health_server():
+    server = HTTPServer(('0.0.0.0', 8000), HealthHandler)
+    server.serve_forever()
 
 # Initialize Google Sheets using environment variable
 def init_google_sheets():
@@ -31,7 +47,7 @@ def init_google_sheets():
     return sheet
 
 sheet = init_google_sheets()
-parser = RailwayParser(use_ai=True)  # Uses Groq AI
+parser = RailwayParser(use_ai=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = """
@@ -388,6 +404,11 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(result)
 
 def main():
+    # Start health check server on port 8000 (required by Koyeb)
+    health_thread = Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    print("✅ Health check server running on port 8000")
+
     application = Application.builder().token(config.BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -397,7 +418,6 @@ def main():
     application.add_handler(CommandHandler("schedule", schedule_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Use polling (no webhook needed)
     print("🤖 Bot started with polling mode...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
