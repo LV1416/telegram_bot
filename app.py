@@ -255,6 +255,12 @@ async def addequipment_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(f"❌ Error adding equipment: {str(e)}")
 
 # ---------- General Message Handler ----------
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import CallbackQueryHandler
+
+# Store pending actions in memory (or use context.user_data)
+pending_actions = {}
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     user = message.from_user
@@ -270,19 +276,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if loco_match:
         loco_no = loco_match.group(1)
     
-    # ----- Determine the date to log -----
+    # Determine log timestamp
     extracted_date = parsed.get('data', {}).get('date')
     if extracted_date:
-        # Convert DD-MM-YYYY to YYYY-MM-DD for the sheet
         try:
             date_obj = datetime.strptime(extracted_date, '%d-%m-%Y')
-            log_timestamp = date_obj.strftime('%Y-%m-%d')  # stores only date
+            log_timestamp = date_obj.strftime('%Y-%m-%d')
         except:
             log_timestamp = system_time.strftime('%Y-%m-%d %H:%M:%S')
     else:
         log_timestamp = system_time.strftime('%Y-%m-%d %H:%M:%S')
     
-    # Always save message with the chosen timestamp
     messages_sheet.append_row([
         log_timestamp,
         loco_no or 'N/A',
@@ -290,18 +294,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username
     ])
     
-    # ----- Process the action (unchanged) -----
-    if parsed['type'] == 'SCHEDULE':
+    # For FITMENT or ADD_EQUIPMENT, show preview and ask for confirmation
+    if parsed['type'] in ['FITMENT', 'ADD_EQUIPMENT']:
+        # Store the parsed data temporarily
+        user_id = str(user.id)
+        pending_actions[user_id] = {
+            'type': parsed['type'],
+            'data': parsed['data'],
+            'original_text': text
+        }
+        
+        # Build preview message
+        preview = await build_preview(parsed['type'], parsed['data'])
+        
+        # Create inline keyboard
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{user_id}"),
+             InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{user_id}")]
+        ])
+        
+        await message.reply_text(preview, reply_markup=keyboard)
+    elif parsed['type'] == 'SCHEDULE':
         result = await process_schedule(parsed['data'])
-        await update.message.reply_text(result)
-    elif parsed['type'] == 'FITMENT':
-        result = await process_fitment(parsed['data'], system_time)   # system_time still used for fallback
         await update.message.reply_text(result)
     elif parsed['type'] == 'REMOVAL':
         result = await process_removal(parsed['data'], system_time)
-        await update.message.reply_text(result)
-    elif parsed['type'] == 'ADD_EQUIPMENT':
-        result = await process_add_equipment(parsed['data'], username)
         await update.message.reply_text(result)
     elif parsed['type'] == 'QUERY':
         result = await process_query(parsed['data'])
@@ -311,6 +328,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ Message logged for Loco {loco_no}")
         else:
             await update.message.reply_text("✅ Message logged (No loco number found)")
+
+async def build_preview(action_type, data):
+    """Build a formatted preview of extracted data."""
+    preview = f"📋 **Extracted Information for {action_type}**\n\n"
+    preview += f"🔹 **Loco No:** {data.get('loco_no', '-')}\n"
+    preview += f"🔹 **Equipment Type:** {data.get('equipment_type', '-')}\n"
+    preview += f"🔹 **MFG Serial:** {data.get('serial_no', '-')}\n"
+    preview += f"🔹 **LOC Serial:** {data.get('loc_serial', '-')}\n"
+    preview += f"🔹 **Make:** {data.get('make', '-')}\n"
+    preview += f"🔹 **Mfg Date:** {data.get('mfg_date', '-')}\n"
+    preview += f"🔹 **Fitment/Event Date:** {data.get('date', '-')}\n"
+    preview += f"🔹 **Schedule:** {data.get('schedule_name', '-')}\n"
+    preview += f"🔹 **Last Overhaul Date:** {data.get('last_overhaul_date', '-')}\n"
+    preview += f"🔹 **Remarks:** {data.get('remarks', '-')[:100]}\n"
+    preview += f"\n✅ **Do you want to proceed with this data?**"
+    return preview
+
+
 # ---------- Schedule Processing ----------
 async def process_schedule(data):
     try:
