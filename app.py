@@ -436,8 +436,8 @@ async def receive_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data['awaiting_edit'] = False
         return
     
-    field = pending.get('editing_field')
-    if not field:
+    field_key = pending.get('editing_field')
+    if not field_key:
         await update.message.reply_text("❌ No field selected for editing.")
         context.user_data['awaiting_edit'] = False
         return
@@ -445,7 +445,7 @@ async def receive_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     new_value = update.message.text.strip()
     
     # Update the pending data with new value
-    pending['data'][field] = new_value
+    pending['data'][field_key] = new_value
     
     # Build updated preview
     preview = await build_preview(pending['type'], pending['data'])
@@ -453,11 +453,15 @@ async def receive_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Create keyboard with Confirm and Edit More buttons
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{user_id}"),
-         InlineKeyboardButton("✏️ Edit More", callback_data=f"edit_{user_id}")]
+         InlineKeyboardButton("✏️ Edit More", callback_data=f"edit_{user_id}"),
+         InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{user_id}")]
     ])
     
-    await update.message.reply_text(f"✅ Field '{field}' updated to: **{new_value}**\n\n{preview}", 
-                                     reply_markup=keyboard, parse_mode='Markdown')
+    await update.message.reply_text(
+        f"✅ Field '{field_key}' updated to: **{new_value}**\n\n{preview}", 
+        reply_markup=keyboard, 
+        parse_mode='Markdown'
+    )
     
     # Reset edit mode
     context.user_data['awaiting_edit'] = False
@@ -487,6 +491,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(result)
         del pending_actions[user_id]
     elif action == 'edit':
+        user_id = user_id
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("Loco No", callback_data=f"editfield_{user_id}_loco_no"),
              InlineKeyboardButton("Equipment Type", callback_data=f"editfield_{user_id}_equipment_type")],
@@ -500,7 +505,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("Remarks", callback_data=f"editfield_{user_id}_remarks")],
             [InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{user_id}")]
         ])
-        await query.edit_message_text("✏️ Which field would you like to edit?", reply_markup=keyboard)
+        await query.edit_message_text("✏️ **Which field would you like to edit?**", reply_markup=keyboard)
     elif action == 'cancel':
         del pending_actions[user_id]
         await query.edit_message_text("❌ Action cancelled.")
@@ -515,9 +520,9 @@ async def edit_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     
     user_id = parts[1]
-    field = parts[2]
+    field_key = parts[2]  # This comes from callback_data like 'editfield_userid_serial_no'
     
-    # Map display names to actual field keys
+    # Mapping of display field to actual dictionary key
     field_mapping = {
         'loco_no': 'loco_no',
         'equipment_type': 'equipment_type',
@@ -531,18 +536,24 @@ async def edit_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         'remarks': 'remarks'
     }
     
-    actual_field = field_mapping.get(field, field)
+    actual_key = field_mapping.get(field_key, field_key)
     
     pending = pending_actions.get(user_id)
     if not pending:
         await query.edit_message_text("❌ Action expired. Please send the message again.")
         return
     
-    pending['editing_field'] = actual_field
+    # Store which field we're editing
+    pending['editing_field'] = actual_key
+    pending['editing_display'] = field_key.replace('_', ' ').title()
+    
+    current_value = pending['data'].get(actual_key, '-')
+    if not current_value or current_value == '':
+        current_value = '-'
     
     await query.edit_message_text(
-        f"✏️ **Editing: {field.replace('_', ' ').title()}**\n\n"
-        f"Current value: `{pending['data'].get(actual_field, '-')}`\n\n"
+        f"✏️ **Editing: {field_key.replace('_', ' ').title()}**\n\n"
+        f"Current value: `{current_value}`\n\n"
         f"Please send the new value for this field.",
         parse_mode='Markdown'
     )
@@ -575,6 +586,7 @@ def main():
     application.add_handler(CommandHandler("schedule", schedule_command))
     application.add_handler(CommandHandler("addequipment", addequipment_command))
 
+    # Make sure these handlers are registered
     application.add_handler(CallbackQueryHandler(callback_handler, pattern='^(confirm|edit|cancel)_.*'))
     application.add_handler(CallbackQueryHandler(edit_field_handler, pattern='^editfield_.*'))
 
