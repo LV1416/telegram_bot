@@ -29,17 +29,17 @@ class RailwayParser:
         if self.use_ai:
             ai_result = self._groq_parse_message(text)
             if ai_result and ai_result.get('confidence', 0) >= 0.6:
-                # Step 2: Validate and enrich with regex
                 validated_result = self._validate_and_enrich(ai_result, text)
                 if validated_result:
                     return validated_result
         
-        # Step 3: Fallback to regex-only parsing
+        # Step 2: Fallback to regex-only parsing
         return self._regex_parse_message(text, username)
     
     def _groq_parse_message(self, text):
         """
-        Use Groq AI (Llama 3.3) to understand any message format
+        Use Groq AI (Llama 3.3) to understand any message format,
+        including ADD_EQUIPMENT intent.
         """
         prompt = f"""You are a railway equipment tracking assistant. Analyze this message from a railway workshop and extract structured data.
 
@@ -48,45 +48,53 @@ Message: "{text}"
 Return ONLY valid JSON in this exact format (no other text, no markdown, no explanation):
 
 {{
-    "type": "FITMENT or REMOVAL or SCHEDULE or QUERY or GENERAL",
+    "type": "FITMENT or REMOVAL or SCHEDULE or QUERY or GENERAL or ADD_EQUIPMENT",
     "confidence": 0.0 to 1.0,
     "data": {{
         "loco_no": "5-digit number or null",
         "equipment_type": "MPH/MVRH/PANTO/GR/SMGR/TRANSFORMER or null",
         "serial_no": "equipment serial number or null",
-        "date": "YYYY-MM-DD or null",
+        "date": "YYYY-MM-DD or DD-MM-YYYY or null",
         "schedule_type": "MAJOR/MINOR or null",
         "schedule_name": "TOH1/TOH2/TOH3/TOH4/IOH/POH/MTR/IA/IC or null",
-        "next_due": "YYYY-MM-DD or null",
+        "next_due": "YYYY-MM-DD or DD-MM-YYYY or null",
         "workshop": "TKD/DBSI/DAHOD/BSL/LKO/ALD or null",
         "overhaul_type": "TOH1/TOH2/IOH/POH/MTR or null",
         "remarks": "extracted remarks or full message",
-        "action": "fit/remove/replace/repair/overhaul/fail or null",
-        "status": "fitted/removed/under_repair/overhauled/failed or null"
+        "action": "fit/remove/replace/repair/overhaul/fail/add or null",
+        "status": "fitted/removed/under_repair/overhauled/failed/storage or null",
+        "make": "manufacturer name or null",
+        "mfg_date": "manufacturing date or null"
     }}
 }}
 
+Additional instructions:
+- If the user wants to ADD a new piece of equipment (e.g., "add equipment MPH serial 19101578 Make Flowwell Mfg 17-09-2019"), set type to "ADD_EQUIPMENT" and put the extracted details into data.
+- For ADD_EQUIPMENT, the status should be "storage" (meaning shopfloor, not yet fitted).
+- For FITMENT, if the equipment does not exist, the fitment will still be recorded later; just extract fitment fields.
+- If the message contains a loco number, extract it.
+- If the message contains a date, convert it to DD-MM-YYYY format (preferred). If not possible, keep original.
+- For schedule updates, look for keywords like "schedule", "TOH", "IOH", "POH", "MTR", "IA", "IC".
+
 Examples:
-"22229: MPH TKD/2024/31 fitted on 19/09/2024"
--> {{"type":"FITMENT","confidence":0.95,"data":{{"loco_no":"22229","equipment_type":"MPH","serial_no":"TKD/2024/31","date":"2024-09-19","action":"fit","status":"fitted"}}}}
 
-"remove MVRH 14623 from 22229 for POH"
--> {{"type":"REMOVAL","confidence":0.95,"data":{{"loco_no":"22229","equipment_type":"MVRH","serial_no":"14623","action":"remove","overhaul_type":"POH","status":"removed"}}}}
+"Add equipment MPH serial 19101578, Make Flowwell, Mfg 17-09-2019"
+-> {{"type":"ADD_EQUIPMENT","confidence":0.95,"data":{{"equipment_type":"MPH","serial_no":"19101578","make":"Flowwell","mfg_date":"17-09-2019","status":"storage","action":"add"}}}}
 
-"31642 panto pt1 sr no 1280 mersen fitted with pcu"
--> {{"type":"FITMENT","confidence":0.85,"data":{{"loco_no":"31642","equipment_type":"PANTO","serial_no":"1280","remarks":"mersen with pcu","action":"fit","status":"fitted"}}}}
+"22292: MPH 19101578 fitted on 15-09-2024 for TOH"
+-> {{"type":"FITMENT","confidence":0.95,"data":{{"loco_no":"22292","equipment_type":"MPH","serial_no":"19101578","date":"15-09-2024","remarks":"TOH","action":"fit","status":"fitted"}}}}
 
-"22721 panto failure AM-12 abnormal"
--> {{"type":"GENERAL","confidence":0.9,"data":{{"loco_no":"22721","equipment_type":"PANTO","remarks":"failure AM-12 abnormal","action":"fail","status":"failed"}}}}
+"remove MPH 19101578 from 22292 for IOH"
+-> {{"type":"REMOVAL","confidence":0.95,"data":{{"loco_no":"22292","equipment_type":"MPH","serial_no":"19101578","overhaul_type":"IOH","action":"remove","status":"removed"}}}}
 
-"Schedule 22229 TOH done 24/06/2025 next due 24/06/2026"
--> {{"type":"SCHEDULE","confidence":0.95,"data":{{"loco_no":"22229","schedule_type":"MAJOR","schedule_name":"TOH","date":"2025-06-24","next_due":"2026-06-24"}}}}
+"Schedule 22229 MAJOR TOH 24-06-2025 next_due 24-06-2026"
+-> {{"type":"SCHEDULE","confidence":0.95,"data":{{"loco_no":"22229","schedule_type":"MAJOR","schedule_name":"TOH","date":"24-06-2025","next_due":"24-06-2026"}}}}
 
 "status of 22229"
 -> {{"type":"QUERY","confidence":0.95,"data":{{"loco_no":"22229","query_type":"LOCO_STATUS"}}}}
 
-"what is history of TKD/2024/31"
--> {{"type":"QUERY","confidence":0.95,"data":{{"query_type":"EQUIPMENT_STATUS","serial_no":"TKD/2024/31"}}}}
+"what is history of 19101578"
+-> {{"type":"QUERY","confidence":0.95,"data":{{"query_type":"EQUIPMENT_STATUS","serial_no":"19101578"}}}}
 
 For any message, try your best to extract information. If uncertain, set confidence lower.
 Only respond with valid JSON. Do not include any markdown formatting or explanations."""
@@ -138,11 +146,16 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
                 loco_match = re.search(r'\b(\d{5})\b', original_text)
                 data['loco_no'] = loco_match.group(1) if loco_match else None
         
-        # Validate serial number format
+        # Validate serial number format – accept alphanumeric with or without slashes/dashes
         if data.get('serial_no'):
-            serial_str = str(data['serial_no'])
-            if not re.search(r'[A-Z0-9]{3,}[-/][A-Z0-9/]+', serial_str):
-                serial_match = re.search(r'([A-Z0-9]{3,}[-/][A-Z0-9/]+)', original_text.upper())
+            serial_str = str(data['serial_no']).strip()
+            # Remove spaces, keep common separators
+            if len(serial_str) > 0:
+                # Accept any non-empty string as serial (no strict pattern needed)
+                pass
+            else:
+                # Try to extract from original text using pattern
+                serial_match = re.search(r'([A-Z0-9]{3,}[-/]?[A-Z0-9/]+|[0-9]+)', original_text.upper())
                 if serial_match:
                     data['serial_no'] = serial_match.group(1)
         
@@ -168,11 +181,10 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
                             data['schedule_type'] = 'MINOR'
                         break
         
-        # Normalize dates
-        if data.get('date'):
-            data['date'] = self._normalize_date(str(data['date']))
-        if data.get('next_due'):
-            data['next_due'] = self._normalize_date(str(data['next_due']))
+        # Normalize dates to DD-MM-YYYY if possible
+        for date_field in ['date', 'next_due', 'mfg_date', 'fitment_date', 'removal_date', 'schedule_date']:
+            if data.get(date_field):
+                data[date_field] = self._normalize_date_to_dd_mm_yyyy(str(data[date_field]))
         
         # Add original message for logging
         data['original_message'] = original_text
@@ -183,21 +195,34 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
                 ai_result['type'] = 'FITMENT'
             elif data.get('action') == 'remove':
                 ai_result['type'] = 'REMOVAL'
+            elif data.get('action') == 'add':
+                ai_result['type'] = 'ADD_EQUIPMENT'
             elif data.get('schedule_name'):
                 ai_result['type'] = 'SCHEDULE'
             else:
                 ai_result['type'] = 'GENERAL'
         
+        # For ADD_EQUIPMENT, ensure status is "STORAGE" if not provided
+        if ai_result['type'] == 'ADD_EQUIPMENT':
+            if not data.get('status'):
+                data['status'] = 'STORAGE'
+            if not data.get('action'):
+                data['action'] = 'add'
+        
+        # For FITMENT, if status missing, set to "fitted"
+        if ai_result['type'] == 'FITMENT' and not data.get('status'):
+            data['status'] = 'fitted'
+        
         ai_result['data'] = data
         return ai_result
     
+    # ---------- Regex fallback methods (unchanged) ----------
     def _regex_parse_message(self, text, username):
-        """
-        Fallback: Regex-only parsing when Groq AI fails
-        """
         text_lower = text.lower()
         
-        if 'schedule' in text_lower:
+        if 'add equipment' in text_lower or 'new equipment' in text_lower or 'create equipment' in text_lower:
+            return self._regex_parse_add_equipment(text)
+        elif 'schedule' in text_lower:
             return self._regex_parse_schedule(text)
         elif 'fit' in text_lower or 'fitted' in text_lower or 'laga' in text_lower:
             return self._regex_parse_fitment(text)
@@ -207,6 +232,39 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
             return self._regex_parse_query(text)
         else:
             return self._regex_parse_general(text, username)
+    
+    def _regex_parse_add_equipment(self, text):
+        result = {'type': 'ADD_EQUIPMENT', 'data': {}, 'confidence': 0.8}
+        
+        # Try to extract equipment type
+        for eq in self.equipment_types:
+            if eq in text.upper():
+                result['data']['equipment_type'] = eq
+                break
+        
+        # Extract serial number (any alphanumeric string with optional slashes/dashes)
+        serial_match = re.search(r'serial\s+[#:]?\s*([A-Z0-9\-/]+)', text, re.IGNORECASE)
+        if serial_match:
+            result['data']['serial_no'] = serial_match.group(1)
+        else:
+            # Take last word that looks like serial
+            words = re.findall(r'[A-Z0-9\-/]+', text.upper())
+            if words:
+                result['data']['serial_no'] = words[-1]
+        
+        # Extract make
+        make_match = re.search(r'make\s+([A-Za-z0-9]+)', text, re.IGNORECASE)
+        if make_match:
+            result['data']['make'] = make_match.group(1)
+        
+        # Extract mfg date
+        date_match = self._extract_date(text)
+        if date_match:
+            result['data']['mfg_date'] = date_match
+        
+        result['data']['status'] = 'STORAGE'
+        result['data']['action'] = 'add'
+        return result
     
     def _regex_parse_schedule(self, text):
         result = {'type': 'SCHEDULE', 'data': {}, 'confidence': 0.7}
@@ -243,7 +301,7 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
         if date_match:
             result['data']['fitment_date'] = date_match
         else:
-            result['data']['fitment_date'] = datetime.now().strftime('%Y-%m-%d')
+            result['data']['fitment_date'] = datetime.now().strftime('%d-%m-%Y')
         result['data']['remarks'] = text
         return result
     
@@ -264,7 +322,7 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
         if date_match:
             result['data']['removal_date'] = date_match
         else:
-            result['data']['removal_date'] = datetime.now().strftime('%Y-%m-%d')
+            result['data']['removal_date'] = datetime.now().strftime('%d-%m-%Y')
         result['data']['remarks'] = text
         return result
     
@@ -294,18 +352,20 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
             match = re.search(pattern, text_upper)
             if match:
                 return {'type': eq_type, 'serial': match.group(1).strip()}
-        serial_pattern = r'([A-Z0-9]{3,}[-/][A-Z0-9/]+)'
+        serial_pattern = r'([A-Z0-9]{3,}[-/][A-Z0-9/]+|[0-9]+)'
         match = re.search(serial_pattern, text_upper)
         if match:
             return {'type': 'UNKNOWN', 'serial': match.group(1)}
         return None
     
     def _extract_date(self, text):
+        # Try DD/MM/YYYY or DD-MM-YYYY
         pattern = r'(\d{1,2})[-/](\d{1,2})[-/](\d{4})'
         match = re.search(pattern, text)
         if match:
             day, month, year = match.groups()
-            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+            return f"{day.zfill(2)}-{month.zfill(2)}-{year}"
+        # Try DD Mon YYYY
         months = {'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06',
                   'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'}
         for month_name, month_num in months.items():
@@ -313,22 +373,30 @@ Only respond with valid JSON. Do not include any markdown formatting or explanat
             match = re.search(pattern, text.lower())
             if match:
                 day, year = match.groups()
-                return f"{year}-{month_num}-{day.zfill(2)}"
+                return f"{day.zfill(2)}-{month_num}-{year}"
+        # Today/yesterday
         if 'today' in text.lower():
-            return datetime.now().strftime('%Y-%m-%d')
+            return datetime.now().strftime('%d-%m-%Y')
         if 'yesterday' in text.lower():
-            return (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            return (datetime.now() - timedelta(days=1)).strftime('%d-%m-%Y')
         return None
     
-    def _normalize_date(self, date_str):
-        if not date_str or date_str == 'null':
-            return None
-        patterns = [
-            (r'(\d{1,2})[-/](\d{1,2})[-/](\d{4})', lambda d,m,y: f"{y}-{m.zfill(2)}-{d.zfill(2)}"),
-            (r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', lambda y,m,d: f"{y}-{m.zfill(2)}-{d.zfill(2)}"),
-        ]
-        for pattern, formatter in patterns:
-            match = re.search(pattern, str(date_str))
-            if match:
-                return formatter(*match.groups())
-        return str(date_str)
+    def _normalize_date_to_dd_mm_yyyy(self, date_str):
+        if not date_str or date_str in ['', '-', 'N/A', 'null']:
+            return ''
+        # Already DD-MM-YYYY
+        if re.match(r'^\d{2}-\d{2}-\d{4}$', date_str):
+            return date_str
+        # Convert from YYYY-MM-DD
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+            parts = date_str.split('-')
+            return f"{parts[2]}-{parts[1]}-{parts[0]}"
+        # Try parsing DD/MM/YYYY
+        if re.match(r'^\d{2}/\d{2}/\d{4}$', date_str):
+            parts = date_str.split('/')
+            return f"{parts[0]}-{parts[1]}-{parts[2]}"
+        # Fallback: try to extract date using regex
+        extracted = self._extract_date(date_str)
+        if extracted:
+            return extracted
+        return date_str
