@@ -76,10 +76,11 @@ class RailwayParser:
                         result['data']['equipment_type'] = eq.upper()
                         break
             # Sr. No. / serial
-            elif 'Sr. No.' in line or 'Serial' in line or 'sr no' in line.lower():
-                serial_match = re.search(r'[\dA-Za-z/]+', line)
+            elif 'Sr. No.' in line or 'Sr.' in line or 'Serial' in line or 'sr no' in line.lower():
+                # Extract value AFTER the '-' separator (e.g. "Sr. No. - 14050354" -> "14050354")
+                serial_match = re.search(r'[-:]\s*([\dA-Za-z/]+)\s*$', line)
                 if serial_match:
-                    result['data']['serial_no'] = serial_match.group()
+                    result['data']['serial_no'] = serial_match.group(1)
             # Make
             elif 'Make' in line:
                 make_match = re.search(r'Make\s*-\s*(\w+)', line, re.IGNORECASE)

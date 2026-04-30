@@ -44,23 +44,14 @@ def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
         "- message_type options:\n"
         "  * 'dga_report' - DGA oil/gas analysis report\n"
         "  * 'panto_status' - Pantograph pressure/height status\n"
-        "  * 'main_equipment' - Generic equipment like TSC, Clutch, MPH, etc.\n"
+        "  * 'main_equipment' - Generic equipment like TSC, Clutch, etc.\n"
         "  * 'loco_info_only' - General info that should ONLY go to Loco Info sheet (not the 3 main sheets)\n"
         "- Use the one-word identifier hint to help classify if provided.\n"
         "- For loco_info_only: write a complete description capturing ALL key information from the message.\n"
         "- For the other types: write a detailed summary for Loco Info covering all relevant fields.\n"
-        "- Date format: convert to DD.MM.YYYY (e.g., 15.04.2026). Short year like '13/02/26' means 2026.\n"
+        "- Date format: convert to DD.MM.YYYY (e.g., 15.04.2026)\n"
         "- Loco No: extract the locomotive number (3-6 digits)\n"
-        "- summary: write a COMPLETE, detailed description. Include ALL of: item name, side (L/R), status, Sr No, Make, Type, Mfg, Reason, Schedule, O/H Date, W/O No — whichever fields are present in the message. Do NOT truncate. No character limit.\n"
-        "\n"
-        "FIELD EXTRACTION RULES for Main Equipment:\n"
-        "- 'Sr No' column: match any of these labels: 'Sr. No.', 'Sr No', 'Sr. No', 'S.No', 'S. No.', 'Serial No', 'Sr.No.'. ALWAYS populate this field when any serial number is present.\n"
-        "- 'Mfg' column: the manufacturing date/year. Labels: 'Mfg', 'Mfg.', 'Manufacture', 'Manufactured'. A line like 'Mfg 10/2013' means Mfg = '10/2013'.\n"
-        "- 'O/H Date' column: overhaul date. Labels: 'O/h', 'O/H Date', 'OH Date', 'Overhaul Date'. A line like 'O/h 13/02/26' means O/H Date = '13.02.2026'.\n"
-        "- 'W/O No' column: work order number. Labels: 'W/O No', 'WO No', 'Tkd/...'. A code like 'Tkd/2026/05' should be placed in W/O No.\n"
-        "- 'Type' column: type/model code (e.g., R-3, DBSI 3011). A line like 'INFO. DBSI 3011' means Type = 'DBSI 3011'.\n"
-        "- Lines WITHOUT a separator (dash/colon/equals) may still carry field values — infer the field from context.\n"
-        "\n"
+        "- summary: write a COMPLETE, detailed description. Include ALL of: item name, side (L/R), status, Sr No, Make, Type, Mfg, Reason, Schedule, O/H Date, W/O No — whichever fields are present in the message. Do NOT truncate. No character limit.\n\n"
         "Output format:\n"
         "{\n"
         '  "message_type": "...",\n'
@@ -69,14 +60,13 @@ def extract_structured_fields(raw_text: str, identifier: str = None) -> dict:
         '  "loco_info": {\n'
         '    "date": "DD.MM.YYYY",\n'
         '    "loco_no": "XXXXX",\n'
-        '    "summary": "complete detailed summary with all extracted fields"\n'
+        '    "summary": "brief one-line summary"\n'
         "  }\n"
         "}\n\n"
         "Sheet column orders:\n"
         "- DGA Report: [Date, Loco No, Schedule, Oil, CH4, C2H4, C2H6, C2H2, H2, CO, CO2, BDV, Remark]\n"
         "- Panto Status: [Date, Loco No, PT1 Pressure, PT2 Pressure, PT1 ORD, PT2 ORD, PT1 ADD, PT2 ADD]\n"
-        "- Main Equipment (sheet1): [Date, Loco No, Item, Side, Status, Sr No, Mfg, Make, Type, Reason, Schedule, O/H Date, W/O No]\n"
-        "  NOTE: Sr No is column index 5 (0-based). Never leave it empty if any serial number appears in the message."
+        "- Main Equipment (sheet1): [Date, Loco No, Item, Side, Status, Sr No, Mfg, Make, Type, Reason, Schedule, O/H Date, W/O No]"
     )
 
     user_prompt = f"Message to parse:{identifier_hint}\n{raw_text}"
