@@ -550,6 +550,10 @@ async def get_loco_status(loco_no):
                 response += f"  MFG Serial : {eq.get('Serial_No_MFG', '-')}\n"
                 response += f"  LOC Serial : {eq.get('Serial_No_LOC', '-')}\n"
                 response += f"  Make       : {eq.get('Make', '-')}\n"
+                # ✅ NEW LINE: Mfg Date
+                mfg_date_raw = eq.get('Mfg_Date', '')
+                mfg_date_display = format_date(mfg_date_raw) if mfg_date_raw else '-'
+                response += f"  Mfg Date   : {mfg_date_display}\n"
                 response += f"  Fitment    : {format_date(eq.get('Fitment_Date'))}\n"
                 response += f"  Last OH    : {eq.get('Last_Overhaul_Type', '-')} ({format_date(eq.get('Last_Overhaul_Date'))})\n"
                 response += f"  Next Due   : {format_date(eq.get('Next_Overhaul_Due'))}\n"
