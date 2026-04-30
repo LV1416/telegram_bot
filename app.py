@@ -337,57 +337,108 @@ async def process_schedule(data):
 
 # ---------- Fitment Processing ----------
 async def process_fitment(data, timestamp):
+    """Process equipment fitment: if equipment not found, create it first (using AI data), then fit."""
     try:
         loco_no = data.get('loco_no')
-        equipment_type = data.get('equipment_type')
+        equipment_type = data.get('equipment_type', 'UNKNOWN')
         serial_no = data.get('serial_no')
         fitment_date = data.get('date') or data.get('fitment_date') or timestamp.strftime('%d-%m-%Y')
         remarks = data.get('remarks', '')
+        make = data.get('make', '')
+        mfg_date = data.get('mfg_date', '')
+        
         if not loco_no or not serial_no:
             return f"❌ Missing loco number or equipment serial number"
 
         equip_master = sheet.worksheet(config.SHEETS["EQUIPMENT_MASTER"])
         all_records = equip_master.get_all_records(head=1)
         found_row = None
+        
+        # Search for existing equipment
         for idx, rec in enumerate(all_records, start=2):
             if str(rec.get('Serial_No_MFG', '')) == serial_no or str(rec.get('Serial_No_LOC', '')) == serial_no:
                 found_row = idx
                 break
+        
+        created = False
+        # If not found, create new equipment
         if not found_row:
-            return f"❌ Equipment {serial_no} not found. Please add it first"
-
-        # Update Current_Loco (col F), Fitment_Date (col G), Status (col K)
-        equip_master.update_cell(found_row, 6, loco_no)          # F
-        equip_master.update_cell(found_row, 7, fitment_date)    # G
-        equip_master.update_cell(found_row, 11, "IN_SERVICE")   # K
+            # Prepare minimal data for new equipment
+            new_row = [
+                serial_no,           # A: Serial_No_MFG
+                "",                  # B: Serial_No_LOC
+                equipment_type,      # C: Equipment_Type
+                make,                # D: Make
+                mfg_date,            # E: Mfg_Date
+                "",                  # F: Current_Loco (will set after creation)
+                "",                  # G: Fitment_Date (will set after creation)
+                "",                  # H: Last_Overhaul_Date
+                "",                  # I: Last_Overhaul_Type
+                "",                  # J: Next_Overhaul_Due
+                "STORAGE",           # K: Status (temporary)
+                f"Auto-created from fitment: {remarks[:100]}"   # L: Notes
+            ]
+            equip_master.append_row(new_row)
+            # Re-fetch to get the new row index
+            all_records = equip_master.get_all_records(head=1)
+            for idx, rec in enumerate(all_records, start=2):
+                if rec.get('Serial_No_MFG') == serial_no or rec.get('Serial_No_LOC') == serial_no:
+                    found_row = idx
+                    break
+            created = True
+        
+        # Now fit the equipment (update Current_Loco, Fitment_Date, Status)
+        equip_master.update_cell(found_row, 6, loco_no)          # F: Current_Loco
+        equip_master.update_cell(found_row, 7, fitment_date)    # G: Fitment_Date
+        equip_master.update_cell(found_row, 11, "IN_SERVICE")   # K: Status
         if remarks:
-            equip_master.update_cell(found_row, 12, remarks)    # L
-
-        # Log to equipment_history
+            # Append to existing notes if any, or replace?
+            current_notes = equip_master.cell(found_row, 12).value or ""
+            if current_notes:
+                new_notes = f"{current_notes} | Fitment: {remarks[:100]}"
+            else:
+                new_notes = f"Fitment: {remarks[:100]}"
+            equip_master.update_cell(found_row, 12, new_notes)
+        
+        # Log to equipment_history (always log the fitment)
         history_sheet = sheet.worksheet(config.SHEETS["EQUIPMENT_HISTORY"])
         history_sheet.append_row([
             serial_no,
             fitment_date,
             "FIT",
-            "STORAGE",
+            "STORAGE" if created else "PREVIOUS_LOCATION",   # From location: if created, STORAGE; else we could fetch previous loco but optional
             loco_no,
             "",
             "",
-            remarks
+            f"Fitted on {fitment_date}. {remarks[:100]}"
         ])
-
-        return f"""✅ Equipment Fitted Successfully
-
-📍 Loco: {loco_no}
-🔧 Equipment: {equipment_type or 'Unknown'} ({serial_no})
-📅 Fitment Date: {fitment_date}
-📝 Notes: {remarks[:100]}...
-
-Equipment has been marked as IN_SERVICE."""
+        
+        # Build response message
+        if created:
+            response = f"✅ **Equipment created and fitted successfully!**\n\n"
+            response += f"🔧 **New Equipment Details:**\n"
+            response += f"   Type: {equipment_type}\n"
+            response += f"   Serial: {serial_no}\n"
+            response += f"   Make: {make or '-'}\n"
+            response += f"   Mfg Date: {mfg_date or '-'}\n\n"
+            response += f"🚂 **Fitted to Loco:** {loco_no}\n"
+            response += f"📅 **Fitment Date:** {fitment_date}\n"
+            response += f"📝 **Notes:** {remarks[:100]}\n\n"
+            response += f"Equipment status is now **IN_SERVICE**."
+        else:
+            response = f"✅ **Equipment fitted successfully!**\n\n"
+            response += f"🔧 Equipment: {equipment_type} ({serial_no})\n"
+            response += f"🚂 Loco: {loco_no}\n"
+            response += f"📅 Fitment Date: {fitment_date}\n"
+            response += f"📝 Notes: {remarks[:100]}\n\n"
+            response += f"Status updated to **IN_SERVICE**."
+        
+        return response
+        
     except Exception as e:
         logger.error(f"Error processing fitment: {e}")
-        return f"❌ Error recording fitment: {str(e)}"
-
+        return f"❌ Error during fitment process: {str(e)}"
+        
 # ---------- Removal Processing ----------
 async def process_removal(data, timestamp):
     try:
