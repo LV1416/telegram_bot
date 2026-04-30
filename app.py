@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.helpers import escape_markdown
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -456,8 +457,12 @@ async def receive_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE)
          InlineKeyboardButton("✏️ Edit More", callback_data=f"edit_{user_id}")]
     ])
     
-    await update.message.reply_text(f"✅ Field '{field}' updated to: **{new_value}**\n\n{preview}", 
-                                     reply_markup=keyboard, parse_mode='Markdown')
+    safe_field = escape_markdown(field.replace('_', ' ').title(), version=1)
+    safe_value = escape_markdown(new_value, version=1)
+    await update.message.reply_text(
+        f"✅ Field *{safe_field}* updated to: `{safe_value}`\n\n{preview}",
+        reply_markup=keyboard, parse_mode='Markdown'
+    )
     
     # Reset edit mode
     context.user_data['awaiting_edit'] = False
