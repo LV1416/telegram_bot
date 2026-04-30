@@ -259,35 +259,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     user = message.from_user
     text = message.text
-    timestamp = datetime.now()
+    system_time = datetime.now()
     username = user.username or f"{user.first_name} {user.last_name or ''}".strip()
-
+    
     parsed = parser.parse_message(text, user.id, username)
     messages_sheet = sheet.worksheet(config.SHEETS["LOCO_MESSAGES"])
-
+    
     loco_no = None
     loco_match = re.search(r'\b(\d{5})\b', text)
     if loco_match:
         loco_no = loco_match.group(1)
-
-    # Always save message
+    
+    # ----- Determine the date to log -----
+    extracted_date = parsed.get('data', {}).get('date')
+    if extracted_date:
+        # Convert DD-MM-YYYY to YYYY-MM-DD for the sheet
+        try:
+            date_obj = datetime.strptime(extracted_date, '%d-%m-%Y')
+            log_timestamp = date_obj.strftime('%Y-%m-%d')  # stores only date
+        except:
+            log_timestamp = system_time.strftime('%Y-%m-%d %H:%M:%S')
+    else:
+        log_timestamp = system_time.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Always save message with the chosen timestamp
     messages_sheet.append_row([
-        timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+        log_timestamp,
         loco_no or 'N/A',
         text,
         username
     ])
-
+    
+    # ----- Process the action (unchanged) -----
     if parsed['type'] == 'SCHEDULE':
         result = await process_schedule(parsed['data'])
         await update.message.reply_text(result)
     elif parsed['type'] == 'FITMENT':
-        result = await process_fitment(parsed['data'], timestamp)
+        result = await process_fitment(parsed['data'], system_time)   # system_time still used for fallback
         await update.message.reply_text(result)
     elif parsed['type'] == 'REMOVAL':
-        result = await process_removal(parsed['data'], timestamp)
+        result = await process_removal(parsed['data'], system_time)
         await update.message.reply_text(result)
-    elif parsed['type'] == 'ADD_EQUIPMENT':      
+    elif parsed['type'] == 'ADD_EQUIPMENT':
         result = await process_add_equipment(parsed['data'], username)
         await update.message.reply_text(result)
     elif parsed['type'] == 'QUERY':
@@ -298,7 +311,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ Message logged for Loco {loco_no}")
         else:
             await update.message.reply_text("✅ Message logged (No loco number found)")
-
 # ---------- Schedule Processing ----------
 async def process_schedule(data):
     try:
