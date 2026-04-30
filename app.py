@@ -1,3 +1,4 @@
+import json as _json
 import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -61,12 +62,24 @@ scope = [
 ]
 
 try:
-    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+    _creds_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    if _creds_json_str:
+        # Cloud deployment: credentials stored as env var (JSON string)
+        _creds_dict = _json.loads(_creds_json_str)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(_creds_dict, scope)
+        print("Loaded Google credentials from GOOGLE_CREDENTIALS_JSON env var.")
+    else:
+        # Local development: credentials stored as a file
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+        print("Loaded Google credentials from credentials.json file.")
 except FileNotFoundError:
-    print("Error: credentials.json not found. Please create it with your Google service account credentials.")
+    print("Error: credentials.json not found. Set GOOGLE_CREDENTIALS_JSON env var or place credentials.json in the project root.")
+    exit(1)
+except _json.JSONDecodeError as e:
+    print(f"Error: GOOGLE_CREDENTIALS_JSON env var contains invalid JSON: {e}")
     exit(1)
 except Exception as e:
-    print(f"Error loading credentials: {e}")
+    print(f"Error loading Google credentials: {e}")
     exit(1)
 
 client = gspread.authorize(creds)
