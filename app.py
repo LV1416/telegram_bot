@@ -147,12 +147,16 @@ async def process_fitment(data, timestamp):
                 "STORAGE", f"Auto-created: {remarks[:100]}"
             ]
             equip_master.append_row(new_row)
+            created = True
             all_records = equip_master.get_all_records(head=1)
             for idx, rec in enumerate(all_records, start=2):
-                if rec.get('Serial_No_MFG') == serial_no or rec.get('Serial_No_LOC') == serial_no:
+                # Use str() to handle Sheets returning numeric cells as int
+                if str(rec.get('Serial_No_MFG', '')) == str(serial_no) or str(rec.get('Serial_No_LOC', '')) == str(serial_no):
                     found_row = idx
                     break
-            created = True
+            if not found_row:
+                # Fallback: newly appended row is always the last one
+                found_row = len(all_records) + 1
 
         # Update loco fields and status
         equip_master.update_cell(found_row, 6, loco_no)          # Current_Loco
