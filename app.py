@@ -127,6 +127,61 @@ Simply type your message naturally - the AI will understand and update the sheet
     await update.message.reply_text(help_text)
 
 # ---------- Add Equipment Command ----------
+
+async def process_add_equipment(data, username):
+    """Add new equipment to equipment_master sheet (status = STORAGE)."""
+    try:
+        equip_type = data.get('equipment_type', '').upper()
+        serial_no = data.get('serial_no', '')
+        make = data.get('make', '')
+        mfg_date = data.get('mfg_date', '')
+        remarks = data.get('remarks', '')
+
+        if not equip_type or not serial_no:
+            return "❌ Missing equipment type or serial number"
+
+        equip_master = sheet.worksheet(config.SHEETS["EQUIPMENT_MASTER"])
+
+        # Check if equipment already exists (by MFG serial or LOC serial)
+        all_records = equip_master.get_all_records(head=1)
+        for rec in all_records:
+            if rec.get('Serial_No_MFG') == serial_no or rec.get('Serial_No_LOC') == serial_no:
+                return f"❌ Equipment {serial_no} already exists in master sheet."
+
+        # Prepare new row (12 columns)
+        new_row = [
+            serial_no,      # A: Serial_No_MFG
+            "",             # B: Serial_No_LOC (can be filled later)
+            equip_type,     # C: Equipment_Type
+            make,           # D: Make
+            mfg_date,       # E: Mfg_Date
+            "",             # F: Current_Loco (empty – shopfloor)
+            "",             # G: Fitment_Date (empty)
+            "",             # H: Last_Overhaul_Date
+            "",             # I: Last_Overhaul_Type
+            "",             # J: Next_Overhaul_Due
+            "STORAGE",      # K: Status (shopfloor)
+            remarks[:200]   # L: Notes (trimmed)
+        ]
+
+        equip_master.append_row(new_row)
+
+        response = f"✅ Equipment added to **STORAGE** (shopfloor)\n\n"
+        response += f"🔧 Type: {equip_type}\n"
+        response += f"📌 Serial: {serial_no}\n"
+        response += f"🏭 Make: {make or '-'}\n"
+        response += f"📅 Mfg Date: {mfg_date or '-'}\n"
+        response += f"📍 Location: STORAGE\n"
+        response += f"✅ Status: STORAGE (not yet fitted)\n\n"
+        response += f"➡️ To fit it to a loco, send e.g.:\n`fit {equip_type} {serial_no} on LOCO_NUMBER fitted on DD-MM-YYYY`"
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error adding equipment: {e}")
+        return f"❌ Error adding equipment: {str(e)}"
+
+
 async def addequipment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Add new equipment to equipment_master sheet."""
     if len(context.args) < 4:
@@ -231,6 +286,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(result)
     elif parsed['type'] == 'REMOVAL':
         result = await process_removal(parsed['data'], timestamp)
+        await update.message.reply_text(result)
+    elif parsed['type'] == 'ADD_EQUIPMENT':      
+        result = await process_add_equipment(parsed['data'], username)
         await update.message.reply_text(result)
     elif parsed['type'] == 'QUERY':
         result = await process_query(parsed['data'])
