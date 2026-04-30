@@ -59,6 +59,7 @@ def format_date(date_str):
 pending_actions = {}
 
 async def build_preview(action_type, data):
+    """Build a formatted preview of extracted data."""
     preview = f"📋 **Extracted Information for {action_type}**\n\n"
     preview += f"🔹 **Loco No:** {data.get('loco_no', '-')}\n"
     preview += f"🔹 **Equipment Type:** {data.get('equipment_type', '-')}\n"
@@ -399,8 +400,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         preview = await build_preview(parsed['type'], parsed['data'])
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{user_id}"),
-             InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{user_id}")]
+        [InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{user_id}"),
+         InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{user_id}"),
+         InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{user_id}")]
         ])
         await update.message.reply_text(preview, reply_markup=keyboard)
     elif parsed['type'] == 'SCHEDULE':
@@ -419,30 +421,47 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ Message logged (No loco number found)")
 
 async def receive_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
+    if not context.user_data.get('awaiting_edit'):
+        return
+    
+    user_id = context.user_data.get('user_id')
+    if not user_id:
+        await update.message.reply_text("❌ Session expired. Please send the message again.")
+        context.user_data['awaiting_edit'] = False
+        return
+    
     pending = pending_actions.get(user_id)
     if not pending:
-        await update.message.reply_text("❌ Action expired. Please send message again.")
+        await update.message.reply_text("❌ Action expired. Please send the message again.")
         context.user_data['awaiting_edit'] = False
         return
-
-    field = context.user_data.get('editing_field')
-    new_value = update.message.text.strip()
+    
+    field = pending.get('editing_field')
     if not field:
-        await update.message.reply_text("❌ No field being edited. Please start over.")
+        await update.message.reply_text("❌ No field selected for editing.")
         context.user_data['awaiting_edit'] = False
         return
-
+    
+    new_value = update.message.text.strip()
+    
+    # Update the pending data with new value
     pending['data'][field] = new_value
-
+    
+    # Build updated preview
     preview = await build_preview(pending['type'], pending['data'])
+    
+    # Create keyboard with Confirm and Edit More buttons
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{user_id}"),
          InlineKeyboardButton("✏️ Edit More", callback_data=f"edit_{user_id}")]
     ])
-    await update.message.reply_text("✅ Field updated.\n\n" + preview, reply_markup=keyboard)
+    
+    await update.message.reply_text(f"✅ Field '{field}' updated to: **{new_value}**\n\n{preview}", 
+                                     reply_markup=keyboard, parse_mode='Markdown')
+    
+    # Reset edit mode
     context.user_data['awaiting_edit'] = False
-    context.user_data['editing_field'] = None
+    context.user_data['user_id'] = None
 
 # ---------- Callback handlers ----------
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -489,20 +508,48 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def edit_field_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
     parts = query.data.split('_')
     if len(parts) < 3:
+        await query.edit_message_text("❌ Invalid edit request.")
         return
+    
     user_id = parts[1]
     field = parts[2]
+    
+    # Map display names to actual field keys
+    field_mapping = {
+        'loco_no': 'loco_no',
+        'equipment_type': 'equipment_type',
+        'serial_no': 'serial_no',
+        'loc_serial': 'loc_serial',
+        'make': 'make',
+        'mfg_date': 'mfg_date',
+        'date': 'date',
+        'schedule_name': 'schedule_name',
+        'last_overhaul_date': 'last_overhaul_date',
+        'remarks': 'remarks'
+    }
+    
+    actual_field = field_mapping.get(field, field)
+    
     pending = pending_actions.get(user_id)
     if not pending:
-        await query.edit_message_text("❌ Action expired.")
+        await query.edit_message_text("❌ Action expired. Please send the message again.")
         return
+    
+    pending['editing_field'] = actual_field
+    
+    await query.edit_message_text(
+        f"✏️ **Editing: {field.replace('_', ' ').title()}**\n\n"
+        f"Current value: `{pending['data'].get(actual_field, '-')}`\n\n"
+        f"Please send the new value for this field.",
+        parse_mode='Markdown'
+    )
+    
     context.user_data['awaiting_edit'] = True
     context.user_data['user_id'] = user_id
-    context.user_data['editing_field'] = field
-    await query.edit_message_text(f"✏️ Edit **{field.replace('_', ' ').title()}**\nPlease send the new value.")
-
+    
 async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
